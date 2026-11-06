@@ -1,0 +1,7 @@
+.build/
+dist/
+.swiftpm/
+opencode.json
+*.xcodeproj
+.DS_Store
+*.log
