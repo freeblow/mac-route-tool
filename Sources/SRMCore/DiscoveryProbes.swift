@@ -96,8 +96,6 @@ public enum DiscoveryWatcher {
 
         var reuse: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
-        // 本机 LocalSend 通常已占用 53317：双方都设 SO_REUSEPORT 才能在 macOS 上共用端口，
-        // 否则 bind 报 errno 48（Address already in use），诊断工具反而被自己的目标挡住。
         setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &reuse, socklen_t(MemoryLayout<Int32>.size))
 
         var local = sockaddr_in()
@@ -105,12 +103,28 @@ public enum DiscoveryWatcher {
         local.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         local.sin_port = port.bigEndian
         local.sin_addr = in_addr(s_addr: INADDR_ANY)
-        let bindResult = withUnsafePointer(to: &local) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+
+        // 本机 LocalSend 通常已占用 *:53317，且其 socket 未设 SO_REUSEPORT——
+        // macOS 上任何选项组合都无法与之共用通配绑定（实测各组合均 errno 48）。
+        // 绑通配失败时退回绑定具体接口地址：与通配 socket 可共存，照样收组播诊断。
+        func bindTo(_ ip: String?) -> Bool {
+            if let ip {
+                guard inet_pton(AF_INET, ip, &local.sin_addr) == 1 else { return false }
+            } else {
+                local.sin_addr = in_addr(s_addr: INADDR_ANY)
             }
+            return withUnsafePointer(to: &local) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            } == 0
         }
-        guard bindResult == 0 else { throw NICError.socketFailed(errno) }
+
+        let bound = bindTo(nil) || NetworkInterfaces.all()
+            .filter { !$0.isLoopback }
+            .compactMap { $0.primaryIPv4?.split(separator: "/").first.map(String.init) }
+            .contains { bindTo($0) }
+        guard bound else { throw NICError.socketFailed(errno) }
 
         // 在每个本机 IPv4 地址上加入组播组（对应 Windows 版 JoinMulticastGroup 全网卡加入）。
         let addresses = NetworkInterfaces.all()
