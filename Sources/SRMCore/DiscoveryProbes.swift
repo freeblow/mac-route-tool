@@ -96,6 +96,9 @@ public enum DiscoveryWatcher {
 
         var reuse: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+        // 本机 LocalSend 通常已占用 53317：双方都设 SO_REUSEPORT 才能在 macOS 上共用端口，
+        // 否则 bind 报 errno 48（Address already in use），诊断工具反而被自己的目标挡住。
+        setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &reuse, socklen_t(MemoryLayout<Int32>.size))
 
         var local = sockaddr_in()
         local.sin_family = sa_family_t(AF_INET)
