@@ -19,6 +19,9 @@ final class AppModel: ObservableObject {
     @Published var routes: [RouteStatus] = []
     @Published var interfaces: [NetInterface] = []
     @Published var daemon: DaemonInfo?
+    /// 守护进程版本落后于应用：新命令在旧守护进程上只会报「未知命令」，
+    /// 检测到后横幅提示一键修复，而不是让用户面对一堆原始报错。
+    @Published var daemonOutdated = false
     @Published var errorMessage: String?
     @Published var connectionError: String?
     @Published var isRefreshing = false
@@ -547,6 +550,10 @@ final class AppModel: ObservableObject {
                 completion(response)
             } else {
                 self.isRefreshing = false
+                if response.error?.contains("未知命令") == true {
+                    // 旧守护进程不认识新命令：按版本过旧处理，横幅比逐条报错有用。
+                    self.daemonOutdated = true
+                }
                 if silent {
                     // 后台刷新失败：只在状态区提示，不弹窗打断。
                     self.daemon = nil
@@ -587,6 +594,7 @@ final class AppModel: ObservableObject {
             if let routes = response.routes { self.routes = routes }
             if let daemon = response.daemon { self.daemon = daemon }
             if let kernelRoutes = response.kernelRoutes { self.kernelRoutes = kernelRoutes }
+            daemonOutdated = SRMVersion.isOutdated(running: daemon?.version)
         } else {
             errorMessage = response.error
         }

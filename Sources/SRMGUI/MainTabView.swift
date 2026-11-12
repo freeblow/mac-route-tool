@@ -12,9 +12,15 @@ enum MainTab: String, CaseIterable, Identifiable {
 /// 三个标签页共用的容器：popover 与主窗口都挂它。
 struct MainTabView: View {
     @State private var selection: MainTab = .routes
+    @EnvironmentObject private var model: AppModel
 
     var body: some View {
         VStack(spacing: 0) {
+            if model.daemonOutdated {
+                outdatedBanner
+                Divider()
+            }
+
             Picker("", selection: $selection) {
                 ForEach(MainTab.allCases) { tab in
                     Text(tab.rawValue).tag(tab)
@@ -37,6 +43,29 @@ struct MainTabView: View {
             }
         }
         .modifier(RouteEditorPresentationModifier())
+    }
+
+    /// 守护进程版本过旧（或缺新命令）：一键走现有的安装/修复流程。
+    private var outdatedBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text("守护进程版本过旧，新功能不可用")
+                .font(.caption)
+            Spacer()
+            if model.isInstallingService {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Button("修复守护进程") {
+                    model.installService()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 }
 

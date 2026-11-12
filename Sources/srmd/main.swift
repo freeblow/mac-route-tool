@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import SRMCore
 
-let toolVersion = "0.1.0"
+let toolVersion = SRMVersion.expected
 
 struct Options {
     var configPath = ConfigStore.defaultConfigPath

@@ -1,7 +1,7 @@
 import Foundation
 import SRMCore
 
-let toolVersion = "0.1.0"
+let toolVersion = SRMVersion.expected
 
 let rawArguments = Array(CommandLine.arguments.dropFirst())
 var socketPath = SocketPaths.socket
