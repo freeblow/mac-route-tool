@@ -68,9 +68,7 @@ final class AppModel: ObservableObject {
         timer = nil
         scanPollTimer?.invalidate()
         scanPollTimer = nil
-        shoutTimer?.invalidate()
-        shoutTimer = nil
-        isShoutRepeat = false
+        stopShoutRepeat()
     }
 
     func refresh() {
@@ -258,17 +256,35 @@ final class AppModel: ObservableObject {
 
     func toggleShoutRepeat(_ nic: NICInfo) {
         if isShoutRepeat {
-            shoutTimer?.invalidate()
-            shoutTimer = nil
-            isShoutRepeat = false
+            stopShoutRepeat()
         } else {
             shoutOnce(from: nic)
-            let target = nic
+            // timer 只记 serviceName：拍发时从当前 nics 重查，DHCP 换址后按新地址发送。
+            shoutServiceName = nic.serviceName
             shoutTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.shoutOnce(from: target) }
+                MainActor.assumeIsolated { self?.repeatShout() }
             }
             isShoutRepeat = true
         }
+    }
+
+    private var shoutServiceName: String?
+
+    private func repeatShout() {
+        guard let serviceName = shoutServiceName,
+              let nic = nics.first(where: { $0.serviceName == serviceName }) else {
+            // 网卡已被移除：自动停止重复宣告。
+            stopShoutRepeat()
+            return
+        }
+        shoutOnce(from: nic)
+    }
+
+    private func stopShoutRepeat() {
+        shoutTimer?.invalidate()
+        shoutTimer = nil
+        shoutServiceName = nil
+        isShoutRepeat = false
     }
 
     func watchDiscovery() {
