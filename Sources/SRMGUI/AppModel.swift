@@ -54,6 +54,7 @@ final class AppModel: ObservableObject {
     private var scanPollTimer: Timer?
     private var shoutTimer: Timer?
     private var fetchScanResult = false
+    private var scanResultRequested = false
 
     func start() {
         refresh()
@@ -65,6 +66,11 @@ final class AppModel: ObservableObject {
     func stop() {
         timer?.invalidate()
         timer = nil
+        scanPollTimer?.invalidate()
+        scanPollTimer = nil
+        shoutTimer?.invalidate()
+        shoutTimer = nil
+        isShoutRepeat = false
     }
 
     func refresh() {
@@ -303,17 +309,23 @@ final class AppModel: ObservableObject {
         isScanning = true
 
         if scanUsesDaemon {
-            perform(.scanStart, scanTarget: target) { [weak self] response in
-                guard let self else { return }
-                guard response.ok else {
+            perform(
+                .scanStart, scanTarget: target,
+                onFailure: { [weak self] response in
+                    // 启动失败：复位扫描状态，避免界面卡在扫描中。
+                    guard let self else { return }
                     self.isScanning = false
                     self.scanPhase = .idle
-                    self.errorMessage = response.error
-                    return
+                    self.scanPollTimer?.invalidate()
+                    self.scanPollTimer = nil
+                    self.errorMessage = response.error ?? "启动扫描失败"
+                },
+                completion: { [weak self] response in
+                    guard let self else { return }
+                    self.applyScanJob(response.scanJob)
+                    self.startScanPolling()
                 }
-                self.applyScanJob(response.scanJob)
-                self.startScanPolling()
-            }
+            )
         } else {
             let scanner = SubnetScanner(
                 target: parsed,
@@ -366,7 +378,13 @@ final class AppModel: ObservableObject {
         scanPhase = job.phase
         scanDone = job.done
         scanTotal = job.total
-        guard job.phase != .running else { return }
+        if job.phase == .running { return }
+        if !fetchScanResult {
+            // 守护进程模式下 .scanStatus 不携带明细：终态先记下，保持轮询，
+            // 等下一拍单独拉取一次 .scanResult 再停止。
+            fetchScanResult = true
+            return
+        }
         isScanning = false
         scanPollTimer?.invalidate()
         scanPollTimer = nil
@@ -378,6 +396,7 @@ final class AppModel: ObservableObject {
 
     private func startScanPolling() {
         fetchScanResult = false
+        scanResultRequested = false
         scanPollTimer?.invalidate()
         scanPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -386,11 +405,21 @@ final class AppModel: ObservableObject {
                     self.perform(.scanStatus, silent: true) { response in
                         self.applyScanJob(response.scanJob)
                     }
-                } else if !self.fetchScanResult {
-                    self.fetchScanResult = true
-                    self.perform(.scanResult, silent: true) { response in
-                        self.applyScanJob(response.scanJob)
-                    }
+                } else if !self.scanResultRequested {
+                    // 结果只取一次：即使拉取失败也不再重试，避免轮询永不停止。
+                    self.scanResultRequested = true
+                    self.perform(
+                        .scanResult, silent: true,
+                        onFailure: { [weak self] _ in
+                            guard let self else { return }
+                            self.isScanning = false
+                            self.scanPollTimer?.invalidate()
+                            self.scanPollTimer = nil
+                        },
+                        completion: { [weak self] response in
+                            self?.applyScanJob(response.scanJob)
+                        }
+                    )
                 }
             }
         }
@@ -462,6 +491,7 @@ final class AppModel: ObservableObject {
         serviceOrder: [String]? = nil,
         scanTarget: String? = nil,
         silent: Bool = false,
+        onFailure: (@MainActor (SRMResponse) -> Void)? = nil,
         completion: @escaping @MainActor (SRMResponse) -> Void
     ) {
         let request = SRMRequest(
@@ -483,6 +513,7 @@ final class AppModel: ObservableObject {
                 } else {
                     self.errorMessage = response.error ?? "操作失败"
                 }
+                onFailure?(response)
             }
         }
     }
