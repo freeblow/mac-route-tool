@@ -46,8 +46,8 @@ final class SubnetScannerTests: XCTestCase {
         XCTAssertEqual(rows.first { $0.address == "192.168.15.1" }?.state, .gateway)
         XCTAssertEqual(rows.first { $0.address == "192.168.15.1" }?.rttMs, 3.0)
         XCTAssertEqual(rows.first { $0.address == "192.168.15.2" }?.state, .selfHost)
-        // .3 在线链路无 ARP 响应 → 空闲
-        XCTAssertEqual(rows.first { $0.address == "192.168.15.3" }?.state, .free)
+        // .3 /30 广播地址 → 保留（预分类，不探测）
+        XCTAssertEqual(rows.first { $0.address == "192.168.15.3" }?.state, .reserved)
         XCTAssertEqual(scanner.interfaceUsed, "en0")
     }
 

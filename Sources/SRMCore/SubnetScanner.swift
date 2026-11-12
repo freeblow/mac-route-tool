@@ -91,10 +91,11 @@ public final class SubnetScanner: @unchecked Sendable {
         let gatewayAddrs: Set<UInt32> = Set(routes
             .filter { $0.destination == "0.0.0.0/0" && $0.isGateway }
             .compactMap { IPv4.parse($0.gateway) })
-        // 仅网络地址预先标记为保留；广播地址交给在线链路探测判定。
+        // 网络/广播地址预先标记为保留（不探测）。
         var reserved: Set<UInt32> = []
-        if case .subnet = target.kind, let base = target.addresses.first {
-            reserved = [base]
+        if case .subnet(let prefix) = target.kind, let base = target.addresses.first {
+            let size = UInt64(1) << UInt64(32 - prefix)
+            reserved = [base, base + UInt32(size) - 1]
         }
 
         // 需要探测的地址 = 全部 − 保留 − 本机
@@ -102,7 +103,7 @@ public final class SubnetScanner: @unchecked Sendable {
 
         var results: [UInt32: ScanRow] = [:]
         for address in target.addresses where reserved.contains(address) {
-            results[address] = ScanRow(address: IPv4.string(address), state: .reserved, note: "网络地址")
+            results[address] = ScanRow(address: IPv4.string(address), state: .reserved, note: "网络/广播地址")
         }
         for address in target.addresses where selfAddrs.contains(address) {
             results[address] = ScanRow(address: IPv4.string(address), state: .selfHost, note: "本机")
