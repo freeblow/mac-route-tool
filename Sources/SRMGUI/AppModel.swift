@@ -365,12 +365,30 @@ final class AppModel: ObservableObject {
 
     func stopScan() {
         if scanUsesDaemon {
-            perform(.scanStop, silent: true) { [weak self] response in
-                self?.applyScanJob(response.scanJob)
-            }
+            perform(
+                .scanStop, silent: true,
+                onFailure: { [weak self] _ in
+                    // 守护进程已失联：复位扫描状态，让「停止」按钮也能救回界面。
+                    self?.resetScanTracking()
+                },
+                completion: { [weak self] response in
+                    self?.applyScanJob(response.scanJob)
+                }
+            )
         } else {
             activeScanner?.cancel()
         }
+    }
+
+    /// 连接层失败（守护进程死亡等）时复位扫描状态，避免轮询永不停止。
+    /// 只处理失败路径，不与正常终态（fetchScanResult/scanResultRequested）冲突。
+    private func resetScanTracking() {
+        isScanning = false
+        scanPhase = .idle
+        scanPollTimer?.invalidate()
+        scanPollTimer = nil
+        fetchScanResult = false
+        scanResultRequested = false
     }
 
     private func applyScanJob(_ job: ScanJobStatus?) {
@@ -402,9 +420,16 @@ final class AppModel: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self, self.isScanning else { return }
                 if self.scanPhase == .running {
-                    self.perform(.scanStatus, silent: true) { response in
-                        self.applyScanJob(response.scanJob)
-                    }
+                    self.perform(
+                        .scanStatus, silent: true,
+                        onFailure: { [weak self] _ in
+                            // 守护进程中途死亡：复位扫描状态，轮询随之停止。
+                            self?.resetScanTracking()
+                        },
+                        completion: { [weak self] response in
+                            self?.applyScanJob(response.scanJob)
+                        }
+                    )
                 } else if !self.scanResultRequested {
                     // 结果只取一次：即使拉取失败也不再重试，避免轮询永不停止。
                     self.scanResultRequested = true
