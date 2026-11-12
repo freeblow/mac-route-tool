@@ -27,8 +27,33 @@ final class AppModel: ObservableObject {
     @Published var probeResults: [UUID: RouteProbeResult] = [:]
     @Published var probingRoutes: Set<UUID> = []
 
+    // 网卡管理
+    @Published var nics: [NICInfo] = []
+    @Published var originalServiceOrder: [String] = []
+    @Published var kernelRoutes: [KernelRoute] = []
+    @Published var firewallApplied = false
+
+    // 子网扫描
+    @Published var scanRows: [ScanRow] = []
+    @Published var scanPhase: ScanJobStatus.Phase = .idle
+    @Published var scanDone = 0
+    @Published var scanTotal = 0
+    @Published var scanSummary: ScanSummary?
+    @Published var scanUsesDaemon = false
+    @Published var isScanning = false
+    @Published var lastScanTarget: String?
+
+    // 局域网发现
+    @Published var watchResult: DiscoveryWatchResult?
+    @Published var isWatching = false
+    @Published var isShoutRepeat = false
+
     private var timer: Timer?
     private var requestID = 0
+    private var activeScanner: SubnetScanner?
+    private var scanPollTimer: Timer?
+    private var shoutTimer: Timer?
+    private var fetchScanResult = false
 
     func start() {
         refresh()
@@ -101,6 +126,276 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - 网卡管理
+
+    func loadNICs() {
+        perform(.nicList) { [weak self] response in
+            guard let self, response.ok else { return }
+            self.nics = response.nics ?? []
+            if self.originalServiceOrder.isEmpty {
+                self.originalServiceOrder = self.nics.map(\.serviceName)
+            }
+        }
+        refreshFirewallState()
+    }
+
+    /// PF 放行状态读 /etc/pf.conf（全局可读），GUI 本地判断即可。
+    func refreshFirewallState() {
+        firewallApplied = DiscoveryFirewall.isApplied()
+    }
+
+    func moveNIC(_ nic: NICInfo, up: Bool) {
+        var order = nics.map(\.serviceName)
+        guard let index = order.firstIndex(of: nic.serviceName) else { return }
+        let target = up ? index - 1 : index + 1
+        guard order.indices.contains(target) else { return }
+        order.swapAt(index, target)
+        perform(.nicSetOrder, serviceOrder: order) { [weak self] response in
+            guard let self, response.ok else { return }
+            self.nics = response.nics ?? []
+        }
+    }
+
+    func restoreServiceOrder() {
+        guard !originalServiceOrder.isEmpty else { return }
+        perform(.nicSetOrder, serviceOrder: originalServiceOrder) { [weak self] response in
+            guard let self, response.ok else { return }
+            self.nics = response.nics ?? []
+        }
+    }
+
+    func setServiceEnabled(_ nic: NICInfo, enabled: Bool) {
+        perform(.nicSetServiceEnabled, serviceName: nic.serviceName, serviceEnabled: enabled) { [weak self] response in
+            guard let self, response.ok else { return }
+            self.nics = response.nics ?? []
+        }
+    }
+
+    func applyFirewall() {
+        perform(.firewallApply) { [weak self] response in
+            guard let self else { return }
+            if response.ok { self.refreshFirewallState() }
+        }
+    }
+
+    func removeFirewall() {
+        perform(.firewallRemove) { [weak self] response in
+            guard let self else { return }
+            if response.ok { self.refreshFirewallState() }
+        }
+    }
+
+    // MARK: - 局域网发现
+
+    func addDiscoveryRoute(for nic: NICInfo) {
+        guard !nic.deviceName.isEmpty else {
+            errorMessage = "该服务没有对应的网络设备"
+            return
+        }
+        let spec = RouteSpec(
+            destination: "224.0.0.167/32",
+            gateway: nil,
+            interfaceName: nic.deviceName,
+            direct: true,
+            enabled: true,
+            note: "局域网发现组播"
+        )
+        perform(.add, spec: spec) { [weak self] response in
+            self?.apply(response)
+        }
+    }
+
+    func removeDiscoveryRoute(for nic: NICInfo) {
+        guard let route = routes.first(where: {
+            $0.spec.destination == "224.0.0.167/32" && $0.spec.interfaceName == nic.deviceName
+        }) else {
+            errorMessage = "没有找到该网卡的发现路由"
+            return
+        }
+        perform(.delete, spec: route.spec) { [weak self] response in
+            self?.apply(response)
+        }
+    }
+
+    func hasDiscoveryRoute(for nic: NICInfo) -> Bool {
+        routes.contains {
+            $0.spec.destination == "224.0.0.167/32" && $0.spec.interfaceName == nic.deviceName
+        }
+    }
+
+    private var localizedName: String {
+        Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+    }
+
+    func shoutOnce(from nic: NICInfo) {
+        guard let cidr = nic.ipv4Addresses.first,
+              let sourceIP = cidr.split(separator: "/").first.map(String.init) else {
+            errorMessage = "该网卡没有 IPv4 地址，无法发送宣告"
+            return
+        }
+        let payload = DiscoveryShout.announcePayload(alias: localizedName)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let failure: String?
+            do {
+                try DiscoveryShout.send(payload: payload, from: sourceIP)
+                failure = nil
+            } catch {
+                failure = "发送宣告失败（源地址 \(sourceIP)）"
+            }
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    if let failure { self?.errorMessage = failure }
+                }
+            }
+        }
+    }
+
+    func toggleShoutRepeat(_ nic: NICInfo) {
+        if isShoutRepeat {
+            shoutTimer?.invalidate()
+            shoutTimer = nil
+            isShoutRepeat = false
+        } else {
+            shoutOnce(from: nic)
+            let target = nic
+            shoutTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.shoutOnce(from: target) }
+            }
+            isShoutRepeat = true
+        }
+    }
+
+    func watchDiscovery() {
+        guard !isWatching else { return }
+        isWatching = true
+        watchResult = nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { try DiscoveryWatcher.watch(seconds: 10) }
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.isWatching = false
+                    switch result {
+                    case .success(let value):
+                        self.watchResult = value
+                    case .failure(let error):
+                        self.errorMessage = "听听看失败：\(error.localizedDescription)"
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 子网扫描
+
+    func startScan(target: String) {
+        guard !isScanning else { return }
+        guard let parsed = SubnetScanTarget.parse(target) else {
+            errorMessage = "目标格式无效：请输入 CIDR（192.168.15.0/24）、单地址或范围（192.168.15.1-200）"
+            return
+        }
+        scanRows = []
+        scanSummary = nil
+        scanPhase = .running
+        scanDone = 0
+        scanTotal = parsed.addresses.count
+        lastScanTarget = target
+        isScanning = true
+
+        if scanUsesDaemon {
+            perform(.scanStart, scanTarget: target) { [weak self] response in
+                guard let self else { return }
+                guard response.ok else {
+                    self.isScanning = false
+                    self.scanPhase = .idle
+                    self.errorMessage = response.error
+                    return
+                }
+                self.applyScanJob(response.scanJob)
+                self.startScanPolling()
+            }
+        } else {
+            let scanner = SubnetScanner(
+                target: parsed,
+                prober: SystemScanProber(),
+                routes: kernelRoutes,
+                interfaces: interfaces
+            )
+            activeScanner = scanner
+            let startedAt = Date()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let rows = scanner.run(progress: { done, total in
+                    DispatchQueue.main.async { [weak self] in
+                        MainActor.assumeIsolated {
+                            guard let self, self.activeScanner === scanner else { return }
+                            self.scanDone = done
+                            self.scanTotal = total
+                        }
+                    }
+                })
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, self.activeScanner === scanner else { return }
+                        self.scanRows = rows
+                        self.scanSummary = SubnetScanner.summarize(
+                            rows: rows,
+                            interfaceUsed: scanner.interfaceUsed,
+                            elapsed: Date().timeIntervalSince(startedAt)
+                        )
+                        self.scanPhase = scanner.cancelled ? .stopped : .done
+                        self.isScanning = false
+                        self.activeScanner = nil
+                    }
+                }
+            }
+        }
+    }
+
+    func stopScan() {
+        if scanUsesDaemon {
+            perform(.scanStop, silent: true) { [weak self] response in
+                self?.applyScanJob(response.scanJob)
+            }
+        } else {
+            activeScanner?.cancel()
+        }
+    }
+
+    private func applyScanJob(_ job: ScanJobStatus?) {
+        guard let job else { return }
+        scanPhase = job.phase
+        scanDone = job.done
+        scanTotal = job.total
+        guard job.phase != .running else { return }
+        isScanning = false
+        scanPollTimer?.invalidate()
+        scanPollTimer = nil
+        if let rows = job.rows {
+            scanRows = rows
+            scanSummary = SubnetScanner.summarize(rows: rows, interfaceUsed: nil, elapsed: 0)
+        }
+    }
+
+    private func startScanPolling() {
+        fetchScanResult = false
+        scanPollTimer?.invalidate()
+        scanPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isScanning else { return }
+                if self.scanPhase == .running {
+                    self.perform(.scanStatus, silent: true) { response in
+                        self.applyScanJob(response.scanJob)
+                    }
+                } else if !self.fetchScanResult {
+                    self.fetchScanResult = true
+                    self.perform(.scanResult, silent: true) { response in
+                        self.applyScanJob(response.scanJob)
+                    }
+                }
+            }
+        }
+    }
+
     func installService() {
         guard !isInstallingService else { return }
         guard let resourceURL = Bundle.main.resourceURL else {
@@ -162,10 +457,17 @@ final class AppModel: ObservableObject {
         _ command: SRMCommand,
         spec: RouteSpec? = nil,
         enabled: Bool? = nil,
+        serviceName: String? = nil,
+        serviceEnabled: Bool? = nil,
+        serviceOrder: [String]? = nil,
+        scanTarget: String? = nil,
         silent: Bool = false,
         completion: @escaping @MainActor (SRMResponse) -> Void
     ) {
-        let request = SRMRequest(id: nextID(), command: command, spec: spec, enabled: enabled)
+        let request = SRMRequest(
+            id: nextID(), command: command, spec: spec, enabled: enabled,
+            serviceName: serviceName, serviceEnabled: serviceEnabled,
+            serviceOrder: serviceOrder, scanTarget: scanTarget)
         requestAsync(request) { [weak self] response in
             guard let self else { return }
             if response.ok {
@@ -212,6 +514,7 @@ final class AppModel: ObservableObject {
             connectionError = nil
             if let routes = response.routes { self.routes = routes }
             if let daemon = response.daemon { self.daemon = daemon }
+            if let kernelRoutes = response.kernelRoutes { self.kernelRoutes = kernelRoutes }
         } else {
             errorMessage = response.error
         }
