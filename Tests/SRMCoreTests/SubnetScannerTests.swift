@@ -102,3 +102,24 @@ final class SubnetScannerTests: XCTestCase {
         XCTAssertEqual(addresses, addresses.sorted())
     }
 }
+
+final class SystemScanProberTests: XCTestCase {
+    func testParseARP() {
+        let sample = """
+        ? (192.168.15.1) at a4:83:e7:1a:2b:3c on en0 ifscope [ethernet]
+        ? (192.168.15.66) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]
+        ? (192.168.15.77) at (incomplete) on en0 ifscope [ethernet]
+        ? (10.40.81.3) at 11-22-33-44-55-66 on en1 ifscope [ethernet]
+        """
+        let table = SystemScanProber.parseARP(sample)
+        XCTAssertEqual(table[IPv4.parse("192.168.15.1")!], "a4:83:e7:1a:2b:3c")
+        XCTAssertEqual(table[IPv4.parse("192.168.15.66")!], "aa:bb:cc:dd:ee:ff")
+        XCTAssertNil(table[IPv4.parse("192.168.15.77")!])   // incomplete 不算
+        XCTAssertNil(table[IPv4.parse("10.40.81.3")!])      // 连字符 MAC 格式不符合输出，跳过
+    }
+
+    func testParsePingLatency() {
+        XCTAssertEqual(SystemScanProber.parsePingLatency("64 bytes from 10.0.0.1: icmp_seq=0 ttl=64 time=12.345 ms"), 12.345)
+        XCTAssertNil(SystemScanProber.parsePingLatency("Request timeout for icmp_seq 0"))
+    }
+}
