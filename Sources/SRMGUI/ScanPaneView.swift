@@ -221,13 +221,24 @@ struct ScanPaneView: View {
             formatter.dateFormat = "yyyyMMdd-HHmmss"
             return formatter.string(from: Date())
         }()
-        panel.nameFieldStringValue = "ip-scan-\(model.lastScanTarget ?? "result")-\(stamp).csv"
-        let rows = model.scanRows
+        // CIDR 等目标里的 / 不能进文件名，替换为下划线。
+        let target = (model.lastScanTarget ?? "result").replacingOccurrences(of: "/", with: "_")
+        panel.nameFieldStringValue = "ip-scan-\(target)-\(stamp).csv"
+        let model = self.model
+        let rows = self.model.scanRows
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             var data = Data([0xEF, 0xBB, 0xBF])  // UTF-8 BOM，Excel 友好
             data.append(Data(ScanCSV.export(rows).utf8))
-            try? data.write(to: url)
+            do {
+                try data.write(to: url)
+            } catch {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        model.errorMessage = "导出 CSV 失败：\(error.localizedDescription)"
+                    }
+                }
+            }
         }
     }
 
