@@ -263,3 +263,18 @@ final class DiscoveryFirewallTests: XCTestCase {
         XCTAssertEqual(removedAgain, sampleConf)  // 没有锚点时原样返回
     }
 }
+
+final class DiscoveryProbesTests: XCTestCase {
+    func testParseAlias() {
+        let json = Data(#"{"alias": "张三的 MacBook", "port": 53317}"#.utf8)
+        XCTAssertEqual(DiscoveryShout.parseAlias(json), "张三的 MacBook")
+        XCTAssertNil(DiscoveryShout.parseAlias(Data("not json".utf8)))
+        XCTAssertNil(DiscoveryShout.parseAlias(Data(#"{"noalias": 1}"#.utf8)))
+        XCTAssertNil(DiscoveryShout.parseAlias(Data(#"{"alias": ""}"#.utf8)))
+    }
+
+    func testAnnouncePayloadRoundTrip() {
+        let payload = DiscoveryShout.announcePayload(alias: "测试机")
+        XCTAssertEqual(DiscoveryShout.parseAlias(payload), "测试机")
+    }
+}
