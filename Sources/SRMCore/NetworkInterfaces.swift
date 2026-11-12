@@ -12,6 +12,8 @@ public struct NetInterface: Identifiable, Hashable, Codable, Sendable {
     public var hardwareAddress: String?
     /// Human readable name (e.g. "Wi-Fi", "Ethernet").
     public var displayName: String?
+    /// IPv6 地址（CIDR 形式）。可选：旧版守护进程响应缺该字段时解码为 nil。
+    public var ipv6Addresses: [String]?
 
     public var id: String { name }
 
@@ -46,7 +48,8 @@ public enum NetworkInterfaces {
                 isRunning: (entry.ifa_flags & UInt32(IFF_RUNNING)) != 0,
                 isLoopback: (entry.ifa_flags & UInt32(IFF_LOOPBACK)) != 0,
                 hardwareAddress: nil,
-                displayName: nil
+                displayName: nil,
+                ipv6Addresses: []
             )
 
             if let address = entry.ifa_addr, let netmask = entry.ifa_netmask {
@@ -57,6 +60,19 @@ public enum NetworkInterfaces {
                     let rawMask = UInt32(bigEndian: mask.sin_addr.s_addr)
                     let prefix = rawMask == 0 ? 0 : rawMask.nonzeroBitCount
                     interface.ipv4Addresses.append("\(IPv4.string(rawAddress))/\(prefix)")
+                }
+                if address.pointee.sa_family == UInt8(AF_INET6) {
+                    let addr6 = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee }
+                    var prefix = 128
+                    if let netmask = entry.ifa_netmask {
+                        let mask6 = netmask.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee }
+                        prefix = Self.ipv6Prefix(mask6.sin6_addr)
+                    }
+                    let bytes = withUnsafeBytes(of: addr6.sin6_addr.__u6_addr.__u6_addr8) { Array($0) }
+                    let groups = stride(from: 0, to: 16, by: 2).map {
+                        String(format: "%x", UInt16(bytes[$0]) << 8 | UInt16(bytes[$0 + 1]))
+                    }
+                    interface.ipv6Addresses?.append("\(groups.joined(separator: ":"))/\(prefix)")
                 }
             }
             if let data = entry.ifa_data, entry.ifa_addr.pointee.sa_family == UInt8(AF_LINK) {
@@ -80,6 +96,18 @@ public enum NetworkInterfaces {
             return lhs.name < rhs.name
         }
         return interfaces
+    }
+
+    /// 128 位掩码中的连续前缀长度。
+    static func ipv6Prefix(_ mask: in6_addr) -> Int {
+        var count = 0
+        let bytes = withUnsafeBytes(of: mask.__u6_addr.__u6_addr8) { Array($0) }
+        for byte in bytes {
+            var value = byte
+            while value & 0x80 != 0 { count += 1; value <<= 1 }
+            if value != 0 { break }  // 掩码不连续，到此为止
+        }
+        return count
     }
 
     /// Friendly name for an interface, derived from `networksetup -listallhardwareports`.

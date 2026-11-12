@@ -127,3 +127,100 @@ final class SystemScanProberTests: XCTestCase {
         XCTAssertNil(SystemScanProber.parsePingLatency("Request timeout for icmp_seq 0"))
     }
 }
+
+final class NICManagerTests: XCTestCase {
+    let serviceOrderSample = """
+    An asterisk (*) denotes that a network service is disabled.
+    (1) Wi-Fi
+    (Hardware Port: Wi-Fi, Device: en0)
+    (2) Ethernet
+    (Hardware Port: Ethernet, Device: en5)
+    (3) Thunderbolt Bridge
+    (Hardware Port: Thunderbolt Bridge, Device: bridge0)
+    """
+
+    let serviceNamesSample = """
+    An asterisk (*) denotes that a network service is disabled.
+    Wi-Fi
+    Ethernet
+    *USB 10/100 LAN
+    Tailscale
+    """
+
+    let ifconfigSample = """
+    en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+        media: autoselect (1000baseT <full-duplex,energy-efficient>)
+    en5: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500
+        media: autoselect (<unknown subtype>)
+    bridge0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+        media: <unknown type>
+    utun3: flags=8050<RUNNING,POINTOPOINT,MULTICAST> mtu 1380
+    """
+
+    func testParseServiceOrder() {
+        let parsed = NICManager.parseServiceOrder(serviceOrderSample)
+        XCTAssertEqual(parsed.count, 3)
+        XCTAssertEqual(parsed[0].name, "Wi-Fi")
+        XCTAssertEqual(parsed[0].device, "en0")
+        XCTAssertEqual(parsed[2].name, "Thunderbolt Bridge")
+        XCTAssertEqual(parsed[2].device, "bridge0")
+    }
+
+    func testParseServiceNames() {
+        let parsed = NICManager.parseServiceNames(serviceNamesSample)
+        XCTAssertEqual(parsed.count, 4)
+        XCTAssertEqual(parsed[0].name, "Wi-Fi")
+        XCTAssertFalse(parsed[0].disabled)
+        XCTAssertEqual(parsed[2].name, "USB 10/100 LAN")
+        XCTAssertTrue(parsed[2].disabled)
+    }
+
+    func testParseIfconfigMedia() {
+        let parsed = NICManager.parseIfconfigMedia(ifconfigSample)
+        XCTAssertEqual(parsed["en0"], "1 Gbps")
+        XCTAssertNil(parsed["en5"])     // unknown subtype
+        XCTAssertNil(parsed["bridge0"]) // unknown type
+        XCTAssertNil(parsed["utun3"])   // 没有 media 行
+    }
+
+    func testSpeedText() {
+        XCTAssertEqual(NICManager.speedText(fromMediaSubtype: "10baseT"), "10 Mbps")
+        XCTAssertEqual(NICManager.speedText(fromMediaSubtype: "100baseTX"), "100 Mbps")
+        XCTAssertEqual(NICManager.speedText(fromMediaSubtype: "1000baseT"), "1 Gbps")
+        XCTAssertEqual(NICManager.speedText(fromMediaSubtype: "2500baseT"), "2.5 Gbps")
+        XCTAssertEqual(NICManager.speedText(fromMediaSubtype: "10GbaseT"), "10 Gbps")
+        XCTAssertNil(NICManager.speedText(fromMediaSubtype: "<unknown>"))
+    }
+
+    func testVirtualDeviceNames() {
+        XCTAssertTrue(NICManager.isVirtualDeviceName("bridge0"))
+        XCTAssertTrue(NICManager.isVirtualDeviceName("utun3"))
+        XCTAssertTrue(NICManager.isVirtualDeviceName("awdl0"))
+        XCTAssertTrue(NICManager.isVirtualDeviceName("llw0"))
+        XCTAssertTrue(NICManager.isVirtualDeviceName("vlan0"))
+        XCTAssertFalse(NICManager.isVirtualDeviceName("en0"))
+        XCTAssertFalse(NICManager.isVirtualDeviceName("en5"))
+    }
+
+    func testDefaultGateways() {
+        let routes = [
+            KernelRoute(destination: "0.0.0.0/0", gateway: "192.168.15.1", flags: "UGScg", interfaceName: "en0", expire: nil),
+            KernelRoute(destination: "0.0.0.0/0", gateway: "link#12", flags: "UGScIg", interfaceName: "en5", expire: nil),
+            KernelRoute(destination: "192.168.15.0/24", gateway: "link#9", flags: "UC", interfaceName: "en0", expire: nil),
+        ]
+        let gateways = NICManager.defaultGateways(routes)
+        XCTAssertEqual(gateways["en0"], "192.168.15.1")
+        XCTAssertNil(gateways["en5"])  // link#12 不是 IP
+        XCTAssertEqual(gateways.count, 1)
+    }
+
+    /// 兼容性：旧版守护进程载荷缺少 ipv6Addresses 字段时，解码必须得到 nil 而不是失败。
+    func testNetInterfaceDecodesOldPayloadWithoutIPv6() throws {
+        let oldPayload = """
+        {"name":"en0","ipv4Addresses":["192.168.15.5/24"],"isUp":true,"isRunning":true,"isLoopback":false,"hardwareAddress":null,"displayName":null}
+        """
+        let decoded = try JSONDecoder().decode(NetInterface.self, from: Data(oldPayload.utf8))
+        XCTAssertEqual(decoded.name, "en0")
+        XCTAssertNil(decoded.ipv6Addresses)
+    }
+}
