@@ -14,10 +14,12 @@ public struct SystemScanProber: ScanProber {
     }
 
     public func arpTable(interface: String) -> [UInt32: String] {
-        guard let result = try? ProcessRunner.run(Self.arpPath, ["-a", "-i", interface]), result.success else {
+        // 不用 `arp -a -i <iface>`：macOS 上带 -i 的调用在大 ARP 表（企业网数百条目）
+        // 下要 30 秒量级；`arp -an` 全表毫秒级，解析后按接口名过滤效果相同。
+        guard let result = try? ProcessRunner.run(Self.arpPath, ["-an"]), result.success else {
             return [:]
         }
-        return Self.parseARP(result.stdout)
+        return Self.parseARP(result.stdout, interface: interface)
     }
 
     public func ping(target: UInt32, sourceIP: String?, timeoutMs: Int) -> Double? {
@@ -28,8 +30,8 @@ public struct SystemScanProber: ScanProber {
         return Self.parsePingLatency(result.stdout)
     }
 
-    /// 从 `arp -a` 输出提取 地址 → 小写 MAC。
-    public static func parseARP(_ text: String) -> [UInt32: String] {
+    /// 从 `arp -a` 输出提取 地址 → 小写 MAC；`interface` 非空时只保留该接口的条目。
+    public static func parseARP(_ text: String, interface: String? = nil) -> [UInt32: String] {
         var table: [UInt32: String] = [:]
         guard let regex = try? NSRegularExpression(
             pattern: #"\((\d{1,3}(?:\.\d{1,3}){3})\) at ([0-9a-fA-F:]+) on (\S+)"#) else { return [:] }
@@ -37,6 +39,10 @@ public struct SystemScanProber: ScanProber {
         for match in regex.matches(in: text, range: range) {
             guard let addressRange = Range(match.range(at: 1), in: text),
                   let macRange = Range(match.range(at: 2), in: text) else { continue }
+            if let interface {
+                guard let ifaceRange = Range(match.range(at: 3), in: text),
+                      String(text[ifaceRange]) == interface else { continue }
+            }
             let address = String(text[addressRange])
             let mac = String(text[macRange]).lowercased()
             guard let raw = IPv4.parse(address) else { continue }

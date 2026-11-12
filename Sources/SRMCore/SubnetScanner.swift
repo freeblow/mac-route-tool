@@ -111,26 +111,40 @@ public final class SubnetScanner: @unchecked Sendable {
 
         let total = target.addresses.count
         var done = results.count
-        let queue = DispatchQueue(label: "srm.scan", attributes: .concurrent)
-        let semaphore = DispatchSemaphore(value: max(1, concurrency))
-        let group = DispatchGroup()
+        // worker 用真实线程而非 GCD 闭包：探测全程阻塞（Thread.sleep、等 arp/ping
+        // 子进程），若占满 GCD 全局线程池，探测内部再要线程读管道会永久饿死，
+        // 整个扫描死锁（曾导致应用点「开始检测」即挂死）。
+        let taskLock = NSLock()
+        var nextIndex = 0
+        let workersDone = DispatchSemaphore(value: 0)
+        let workerCount = min(max(1, concurrency), probeAddresses.count)
 
-        for address in probeAddresses {
-            if cancelled { break }
-            group.enter()
-            semaphore.wait()
-            queue.async { [self] in
-                defer { semaphore.signal(); group.leave() }
-                let row = self.probe(address, link: link, gatewayAddrs: gatewayAddrs)
-                self.lock.lock()
-                results[address] = row
-                done += 1
-                let (currentDone, currentTotal) = (done, total)
-                self.lock.unlock()
-                progress(currentDone, currentTotal)
+        for _ in 0..<workerCount {
+            Thread.detachNewThread { [weak self] in
+                guard let self else { workersDone.signal(); return }
+                while true {
+                    if self.cancelled { break }
+                    taskLock.lock()
+                    let index = nextIndex
+                    if index >= probeAddresses.count {
+                        taskLock.unlock()
+                        break
+                    }
+                    nextIndex += 1
+                    taskLock.unlock()
+                    let address = probeAddresses[index]
+                    let row = self.probe(address, link: link, gatewayAddrs: gatewayAddrs)
+                    self.lock.lock()
+                    results[address] = row
+                    done += 1
+                    let (currentDone, currentTotal) = (done, total)
+                    self.lock.unlock()
+                    progress(currentDone, currentTotal)
+                }
+                workersDone.signal()
             }
         }
-        group.wait()
+        for _ in 0..<workerCount { workersDone.wait() }
 
         return target.addresses.compactMap { results[$0] }
             .sorted { (IPv4.parse($0.address) ?? 0) < (IPv4.parse($1.address) ?? 0) }

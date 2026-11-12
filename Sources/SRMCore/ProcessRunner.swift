@@ -38,17 +38,32 @@ public enum ProcessRunner {
             throw ProcessError.launchFailed(launchPath, error.localizedDescription)
         }
 
-        // Read both pipes concurrently to avoid dead-locking on a full pipe buffer.
+        // 双管道并发读取，避免管道缓冲区写满导致子进程与读取端互相等死。
+        // 读取用独立线程而非 GCD：扫描引擎 64 并发探测会同时调用本函数，
+        // 若读取工作项挤不进已被阻塞线程占满的 GCD 池，调用方在 group 等待上
+        // 永久饿死（曾导致应用启动扫描即挂死）。每个读取线程持有自己的局部
+        // Data，交回时加锁。
         var outData = Data()
         var errData = Data()
-        let group = DispatchGroup()
-        let queue = DispatchQueue(label: "srm.process.io", attributes: .concurrent)
+        let lock = NSLock()
+        let readersDone = DispatchSemaphore(value: 0)
 
-        queue.async(group: group) { outData = outPipe.fileHandleForReading.readDataToEndOfFile() }
-        queue.async(group: group) { errData = errPipe.fileHandleForReading.readDataToEndOfFile() }
-        group.wait()
+        Thread.detachNewThread {
+            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+            lock.lock(); outData = data; lock.unlock()
+            readersDone.signal()
+        }
+        Thread.detachNewThread {
+            let data = errPipe.fileHandleForReading.readDataToEndOfFile()
+            lock.lock(); errData = data; lock.unlock()
+            readersDone.signal()
+        }
+        readersDone.wait()
+        readersDone.wait()
         process.waitUntilExit()
 
+        lock.lock()
+        defer { lock.unlock() }
         return ProcessResult(
             exitCode: process.terminationStatus,
             stdout: String(decoding: outData, as: UTF8.self),

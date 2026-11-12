@@ -122,6 +122,21 @@ final class SystemScanProberTests: XCTestCase {
         XCTAssertNil(table[IPv4.parse("10.40.81.3")!])      // 连字符 MAC 格式不符合输出，跳过
     }
 
+    /// arpTable 用 `arp -an`（全表毫秒级）+ 按接口过滤，替代 30 秒量级的 `arp -a -i`。
+    func testParseARPInterfaceFilter() {
+        let sample = """
+        ? (192.168.15.1) at a4:83:e7:1a:2b:3c on en0 ifscope [ethernet]
+        ? (10.40.81.2) at 6c:1f:f7:6:a4:e8 on en1 ifscope [ethernet]
+        """
+        let en0 = SystemScanProber.parseARP(sample, interface: "en0")
+        XCTAssertEqual(en0.count, 1)
+        XCTAssertEqual(en0[IPv4.parse("192.168.15.1")!], "a4:83:e7:1a:2b:3c")
+        let en1 = SystemScanProber.parseARP(sample, interface: "en1")
+        XCTAssertEqual(en1.count, 1)
+        XCTAssertEqual(en1[IPv4.parse("10.40.81.2")!], "6c:1f:f7:6:a4:e8")
+        XCTAssertNil(SystemScanProber.parseARP(sample, interface: "en5")[IPv4.parse("192.168.15.1")!])
+    }
+
     func testParsePingLatency() {
         XCTAssertEqual(SystemScanProber.parsePingLatency("64 bytes from 10.0.0.1: icmp_seq=0 ttl=64 time=12.345 ms"), 12.345)
         XCTAssertNil(SystemScanProber.parsePingLatency("Request timeout for icmp_seq 0"))
