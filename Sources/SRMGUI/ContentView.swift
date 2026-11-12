@@ -14,23 +14,6 @@ struct ContentView: View {
         }
         .frame(width: 520)
         .background(Color(NSColor.windowBackgroundColor))
-        .sheet(item: $model.editorTarget) { target in
-            switch target {
-            case .new:
-                RouteEditorView(spec: RouteSpec(destination: "", gateway: ""), isNew: true)
-            case .edit(let spec):
-                RouteEditorView(spec: spec, isNew: false)
-            }
-        }
-        .alert(
-            "出错了",
-            isPresented: Binding(
-                get: { model.errorMessage != nil && model.editorTarget == nil },
-                set: { if !$0 { model.errorMessage = nil } }
-            ),
-            actions: { Button("好") { model.errorMessage = nil } },
-            message: { Text(model.errorMessage ?? "") }
-        )
     }
 
     private var header: some View {
