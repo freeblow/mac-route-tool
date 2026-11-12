@@ -53,6 +53,9 @@ final class AppModel: ObservableObject {
 
     private var timer: Timer?
     private var requestID = 0
+    /// 本轮「版本过旧」是否已自动发起过修复：自动授权弹窗只弹一次，
+    /// 用户取消后保留横幅供手动重试，避免每 4 秒刷新反复弹窗。
+    private var autoRepairAttempted = false
     private var activeScanner: SubnetScanner?
     private var scanPollTimer: Timer?
     private var shoutTimer: Timer?
@@ -469,6 +472,14 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// 检测到守护进程过旧时自动发起安装/修复（弹系统授权对话框）。
+    /// 只自动发起一次；用户取消后横幅保留，手动点「修复守护进程」仍可重试。
+    private func autoRepairIfNeeded() {
+        guard !autoRepairAttempted, !isInstallingService else { return }
+        autoRepairAttempted = true
+        installService()
+    }
+
     func installService() {
         guard !isInstallingService else { return }
         guard let resourceURL = Bundle.main.resourceURL else {
@@ -551,8 +562,9 @@ final class AppModel: ObservableObject {
             } else {
                 self.isRefreshing = false
                 if response.error?.contains("未知命令") == true {
-                    // 旧守护进程不认识新命令：按版本过旧处理，横幅比逐条报错有用。
+                    // 旧守护进程不认识新命令：按版本过旧处理，自动发起修复。
                     self.daemonOutdated = true
+                    self.autoRepairIfNeeded()
                 }
                 if silent {
                     // 后台刷新失败：只在状态区提示，不弹窗打断。
@@ -595,6 +607,11 @@ final class AppModel: ObservableObject {
             if let daemon = response.daemon { self.daemon = daemon }
             if let kernelRoutes = response.kernelRoutes { self.kernelRoutes = kernelRoutes }
             daemonOutdated = SRMVersion.isOutdated(running: daemon?.version)
+            if daemonOutdated {
+                autoRepairIfNeeded()
+            } else {
+                autoRepairAttempted = false  // 修复成功后允许下次降级再自动弹
+            }
         } else {
             errorMessage = response.error
         }
