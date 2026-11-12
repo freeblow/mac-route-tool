@@ -65,6 +65,7 @@ final class Daemon {
     private var timer: DispatchSourceTimer?
     private var startedAt = Date()
     private var lastError: String?
+    private let scanJobs = ScanJobManager()
 
     init(options: Options) throws {
         self.options = options
@@ -329,9 +330,43 @@ final class Daemon {
         }
     }
 
-    // Task 10 会替换为完整的扫描任务管理。
     private func handleScanCommand(_ command: SRMCommand, _ request: SRMRequest) -> SRMResponse {
-        SRMResponse(id: request.id, ok: false, error: "扫描任务尚未实现")
+        switch command {
+        case .scanStart:
+            guard let target = request.scanTarget else {
+                return SRMResponse(id: request.id, ok: false, error: "缺少扫描目标")
+            }
+            switch scanJobs.start(target: target) {
+            case .started(let id):
+                var response = SRMResponse(id: request.id, ok: true)
+                response.jobId = id
+                response.scanJob = scanJobs.status()
+                return response
+            case .busy:
+                return SRMResponse(id: request.id, ok: false, error: "已有扫描任务在执行")
+            case .invalidTarget:
+                return SRMResponse(id: request.id, ok: false, error: "扫描目标格式无效")
+            }
+
+        case .scanStatus:
+            var response = SRMResponse(id: request.id, ok: true)
+            response.scanJob = scanJobs.status()
+            return response
+
+        case .scanResult:
+            var response = SRMResponse(id: request.id, ok: true)
+            response.scanJob = scanJobs.result()
+            return response
+
+        case .scanStop:
+            scanJobs.stop()
+            var response = SRMResponse(id: request.id, ok: true)
+            response.scanJob = scanJobs.status()
+            return response
+
+        default:
+            return SRMResponse(id: request.id, ok: false, error: "未支持的扫描命令 \(command.rawValue)")
+        }
     }
 
     private func daemonInfo() -> DaemonInfo {
