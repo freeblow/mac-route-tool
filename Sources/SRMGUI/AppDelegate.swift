@@ -6,6 +6,7 @@ import SRMCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
+    private var mainWindow: NSWindow?
     let model = AppModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -66,12 +67,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refresh.target = self
         let install = NSMenuItem(title: "安装/修复守护进程…", action: #selector(installService), keyEquivalent: "")
         install.target = self
+        let main = NSMenuItem(title: "打开主窗口", action: #selector(openMainWindow), keyEquivalent: "")
+        main.target = self
         let open = NSMenuItem(title: "打开配置文件", action: #selector(openConfig), keyEquivalent: "")
         open.target = self
         let quit = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(refresh)
         menu.addItem(install)
+        menu.addItem(main)
         menu.addItem(open)
         menu.addItem(.separator())
         menu.addItem(quit)
@@ -86,6 +90,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func installService() {
         model.installService()
+    }
+
+    @objc private func openMainWindow() {
+        if let window = mainWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "SRM"
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: MainTabView().environmentObject(model))
+        window.center()
+        mainWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func openConfig() {
