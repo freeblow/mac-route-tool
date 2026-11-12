@@ -224,3 +224,42 @@ final class NICManagerTests: XCTestCase {
         XCTAssertNil(decoded.ipv6Addresses)
     }
 }
+
+final class DiscoveryFirewallTests: XCTestCase {
+    let sampleConf = """
+    scrub-anchor "com.apple/*"
+    nat-anchor "com.apple/*"
+    anchor "com.apple/*"
+    load anchor "com.apple" from "/etc/pf.anchors/com.apple"
+    """
+
+    func testAnchorRulesContainPortAndProtocols() {
+        let rules = DiscoveryFirewall.anchorRules()
+        XCTAssertTrue(rules.contains("53317"))
+        XCTAssertTrue(rules.contains("proto tcp"))
+        XCTAssertTrue(rules.contains("proto udp"))
+        XCTAssertTrue(rules.contains("pass in"))
+    }
+
+    func testPfConfWithAnchor() {
+        let updated = DiscoveryFirewall.pfConfWithAnchor(sampleConf)
+        XCTAssertNotNil(updated)
+        XCTAssertTrue(updated!.contains("anchor \"com.srm.localsend\""))
+        XCTAssertTrue(updated!.contains("load anchor \"com.srm.localsend\""))
+        XCTAssertTrue(updated!.hasPrefix("scrub-anchor"))  // 原有内容保留在最前
+    }
+
+    func testPfConfWithAnchorIsIdempotent() {
+        let once = DiscoveryFirewall.pfConfWithAnchor(sampleConf)!
+        XCTAssertNil(DiscoveryFirewall.pfConfWithAnchor(once))
+    }
+
+    func testPfConfWithoutAnchor() {
+        let withAnchor = DiscoveryFirewall.pfConfWithAnchor(sampleConf)!
+        let removed = DiscoveryFirewall.pfConfWithoutAnchor(withAnchor)
+        XCTAssertFalse(removed.contains("com.srm.localsend"))
+        XCTAssertTrue(removed.contains("com.apple/*"))  // 原有内容不动
+        let removedAgain = DiscoveryFirewall.pfConfWithoutAnchor(sampleConf)
+        XCTAssertEqual(removedAgain, sampleConf)  // 没有锚点时原样返回
+    }
+}
