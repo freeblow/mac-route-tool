@@ -75,14 +75,18 @@ public enum NetworkInterfaces {
                     interface.ipv6Addresses?.append("\(groups.joined(separator: ":"))/\(prefix)")
                 }
             }
-            if let data = entry.ifa_data, entry.ifa_addr.pointee.sa_family == UInt8(AF_LINK) {
-                let sockaddrDL = UnsafeRawPointer(data).assumingMemoryBound(to: sockaddr_dl.self).pointee
+            if let address = entry.ifa_addr, address.pointee.sa_family == UInt8(AF_LINK) {
+                // macOS 上 AF_LINK 的 ifa_data 指向 if_data（统计信息），
+                // 硬件地址在 ifa_addr（sockaddr_dl）里，按 sdl_nlen 偏移读取 sdl_alen 字节。
+                let sockaddrDL = address.withMemoryRebound(to: sockaddr_dl.self, capacity: 1) { $0.pointee }
+                let offset = Int(sockaddrDL.sdl_nlen)
                 let length = Int(sockaddrDL.sdl_alen)
-                if length >= 6 {
-                    var bytes: [String] = []
-                    withUnsafeBytes(of: sockaddrDL.sdl_data) { raw in
-                        for index in 0..<6 { bytes.append(String(format: "%02x", raw[index])) }
-                    }
+                var bytes: [String] = []
+                withUnsafeBytes(of: sockaddrDL.sdl_data) { raw in
+                    guard offset >= 0, length >= 6, raw.count >= offset + 6 else { return }
+                    for index in 0..<6 { bytes.append(String(format: "%02x", raw[offset + index])) }
+                }
+                if bytes.count == 6 {
                     interface.hardwareAddress = bytes.joined(separator: ":")
                 }
             }
