@@ -11,6 +11,16 @@ public enum SRMCommand: String, Codable, Sendable {
     case interfaces
     case kernelRoutes
     case config
+    // 网卡管理与 IP 检测
+    case nicList
+    case nicSetServiceEnabled
+    case nicSetOrder
+    case firewallApply
+    case firewallRemove
+    case scanStart
+    case scanStatus
+    case scanResult
+    case scanStop
 }
 
 public struct SRMRequest: Codable, Sendable {
@@ -18,12 +28,32 @@ public struct SRMRequest: Codable, Sendable {
     public var command: String
     public var spec: RouteSpec?
     public var enabled: Bool?
+    public var serviceName: String?
+    public var serviceEnabled: Bool?
+    public var serviceOrder: [String]?
+    public var scanTarget: String?
+    public var jobId: String?
 
-    public init(id: Int, command: SRMCommand, spec: RouteSpec? = nil, enabled: Bool? = nil) {
+    public init(
+        id: Int,
+        command: SRMCommand,
+        spec: RouteSpec? = nil,
+        enabled: Bool? = nil,
+        serviceName: String? = nil,
+        serviceEnabled: Bool? = nil,
+        serviceOrder: [String]? = nil,
+        scanTarget: String? = nil,
+        jobId: String? = nil
+    ) {
         self.id = id
         self.command = command.rawValue
         self.spec = spec
         self.enabled = enabled
+        self.serviceName = serviceName
+        self.serviceEnabled = serviceEnabled
+        self.serviceOrder = serviceOrder
+        self.scanTarget = scanTarget
+        self.jobId = jobId
     }
 }
 
@@ -96,6 +126,31 @@ public struct RouteStatus: Codable, Sendable, Identifiable {
     }
 }
 
+/// 守护进程侧扫描任务状态。
+public struct ScanJobStatus: Codable, Sendable {
+    public enum Phase: String, Codable, Sendable {
+        case idle
+        case running
+        case done
+        case failed
+        case stopped
+    }
+
+    public var phase: Phase
+    public var done: Int
+    public var total: Int
+    public var error: String?
+    public var rows: [ScanRow]?
+
+    public init(phase: Phase, done: Int, total: Int, error: String?, rows: [ScanRow]?) {
+        self.phase = phase
+        self.done = done
+        self.total = total
+        self.error = error
+        self.rows = rows
+    }
+}
+
 public struct SRMResponse: Codable, Sendable {
     public var id: Int
     public var ok: Bool
@@ -104,10 +159,16 @@ public struct SRMResponse: Codable, Sendable {
     public var routes: [RouteStatus]?
     public var interfaces: [NetInterface]?
     public var kernelRoutes: [KernelRoute]?
+    public var nics: [NICInfo]?
+    public var scanJob: ScanJobStatus?
+    public var jobId: String?
 
     public init(id: Int, ok: Bool, error: String? = nil) {
         self.id = id
         self.ok = ok
         self.error = error
+        self.nics = nil
+        self.scanJob = nil
+        self.jobId = nil
     }
 }

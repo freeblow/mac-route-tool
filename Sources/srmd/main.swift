@@ -262,6 +262,12 @@ final class Daemon {
             response.routes = statuses
             response.daemon = daemonInfo()
             return response
+
+        case .nicList, .nicSetServiceEnabled, .nicSetOrder,
+             .firewallApply, .firewallRemove,
+             .scanStart, .scanStatus, .scanResult, .scanStop:
+            // 由后续任务实现（网卡管理 / 防火墙 / 扫描任务）。
+            return SRMResponse(id: request.id, ok: false, error: "命令暂未实现 \(request.command)")
         }
     }
 
