@@ -32,6 +32,11 @@ struct ScanPaneView: View {
                 targetText = first
             }
         }
+        .onChange(of: model.interfaces) { _ in
+            if targetText.isEmpty, let first = subnetOptions.first {
+                targetText = first
+            }
+        }
     }
 
     /// 本机直连子网（接口 IPv4，前缀 ≤ /30，排除 169.254 与 loopback）。
