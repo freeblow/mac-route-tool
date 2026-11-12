@@ -156,6 +156,9 @@ public final class SubnetScanner: @unchecked Sendable {
             if let mac {
                 return ScanRow(address: text, state: .occupied, mac: mac, note: "ARP 响应")
             }
+            if cancelled {
+                return ScanRow(address: text, state: .unknown, note: "已取消")
+            }
             return ScanRow(address: text, state: .free, note: "两轮 ARP 无响应")
         }
 

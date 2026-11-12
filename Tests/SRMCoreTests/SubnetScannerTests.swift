@@ -86,6 +86,10 @@ final class SubnetScannerTests: XCTestCase {
         let rows = scanner.run(progress: { _, _ in })
         XCTAssertFalse(rows.isEmpty)
         XCTAssertLessThan(rows.count, target.addresses.count)  // 取消后提前结束
+        // 取消后不应伪造「空闲」：未完成的探测一律判 unknown（FakeProber 无 ARP
+        // 响应，未取消时全为 free，故出现 free 即为取消路径伪造）。
+        XCTAssertFalse(rows.contains { $0.state == .free },
+                       "取消后未完成的探测不应被标记为空闲")
     }
 
     func testRowsAreSortedByAddress() {
