@@ -55,9 +55,7 @@ public enum RouteApplier {
 
     @discardableResult
     public static func add(_ spec: RouteSpec) -> Outcome {
-        guard spec.normalizedGateway != nil else {
-            return .failure("缺少网关地址，无法写入路由表")
-        }
+        // 无网关直连路由（direct + -interface）不经过网关解析，直接写路由表。
         let arguments = addArguments(for: spec)
         let result = execute(arguments)
         if result.success {

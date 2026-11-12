@@ -49,8 +49,17 @@ public final class RouteManager {
     public func add(_ spec: RouteSpec) throws -> RouteSpec {
         let sanitized = spec.sanitized()
         try sanitized.validate()
-        guard sanitized.normalizedGateway != nil else {
-            throw RouteValidationError.badGateway("")
+        if sanitized.direct {
+            // 无网关直连路由（如 224.0.0.167/32 -interface en0）不需要网关，但必须绑定出接口。
+            if sanitized.normalizedGateway == nil {
+                guard let interfaceName = sanitized.interfaceName, !interfaceName.isEmpty else {
+                    throw RouteValidationError.badInterface("直连路由必须指定出接口")
+                }
+            }
+        } else {
+            guard sanitized.normalizedGateway != nil else {
+                throw RouteValidationError.badGateway("")
+            }
         }
         if let index = config.routes.firstIndex(where: { $0.id == sanitized.id }) {
             config.routes[index] = sanitized
@@ -192,13 +201,29 @@ public final class RouteManager {
     }
 
     private func apply(_ spec: RouteSpec, interfaces: [NetInterface]) -> RouteStatus {
-        guard let gateway = spec.normalizedGateway else {
-            return RouteStatus(spec: spec, state: .failed, message: "缺少网关地址", resolvedInterface: nil, managed: false)
-        }
+        var resolvedInterface: String?
 
-        let resolvedInterface = RouteApplier.resolveInterface(for: gateway)
-        if resolvedInterface == nil {
-            return RouteStatus(spec: spec, state: .pending, message: "网关 \(gateway) 暂时不可达", resolvedInterface: nil, managed: false)
+        if spec.direct, spec.normalizedGateway == nil {
+            // 无网关直连路由：出接口就是路由本身，校验接口存在且可用（不经过网关解析）。
+            guard let wanted = spec.interfaceName, !wanted.isEmpty else {
+                return RouteStatus(spec: spec, state: .failed, message: "直连路由未指定出接口", resolvedInterface: nil, managed: false)
+            }
+            guard let info = interfaces.first(where: { $0.name == wanted }) else {
+                return RouteStatus(spec: spec, state: .pending, message: "接口 \(wanted) 不存在", resolvedInterface: nil, managed: false)
+            }
+            guard info.isUsable else {
+                return RouteStatus(spec: spec, state: .pending, message: "接口 \(wanted) 尚未就绪", resolvedInterface: wanted, managed: false)
+            }
+            resolvedInterface = wanted
+        } else {
+            guard let gateway = spec.normalizedGateway else {
+                return RouteStatus(spec: spec, state: .failed, message: "缺少网关地址", resolvedInterface: nil, managed: false)
+            }
+            let resolved = RouteApplier.resolveInterface(for: gateway)
+            if resolved == nil {
+                return RouteStatus(spec: spec, state: .pending, message: "网关 \(gateway) 暂时不可达", resolvedInterface: nil, managed: false)
+            }
+            resolvedInterface = resolved
         }
 
         if let wanted = spec.interfaceName, !wanted.isEmpty {
@@ -206,7 +231,7 @@ public final class RouteManager {
                 return RouteStatus(
                     spec: spec,
                     state: .failed,
-                    message: "网关 \(gateway) 实际经由 \(resolvedInterface ?? "未知接口")，与绑定接口 \(wanted) 不一致",
+                    message: "网关 \(spec.normalizedGateway ?? "") 实际经由 \(resolvedInterface ?? "未知接口")，与绑定接口 \(wanted) 不一致",
                     resolvedInterface: resolvedInterface,
                     managed: false
                 )
