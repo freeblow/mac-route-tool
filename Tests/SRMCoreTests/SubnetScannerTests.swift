@@ -81,7 +81,11 @@ final class SubnetScannerTests: XCTestCase {
         let prober = FakeProber()
         let target = SubnetScanTarget.parse("192.168.15.1-200")!
         let interfaces = makeInterfaces(cidr: "192.168.15.1/24")
-        let scanner = SubnetScanner(target: target, prober: prober, routes: makeRoutes(), interfaces: interfaces)
+        // 并发度必须远小于 GCD 线程池上限：默认 64 个探测同时 Thread.sleep 会
+        // 饿死全局线程池，令 asyncAfter 的 cancel 闭包延迟到探测结束后才执行
+        // （测试环境伪影，非产品缺陷——生产环境 cancel 由主线程调用）。
+        let scanner = SubnetScanner(target: target, prober: prober, routes: makeRoutes(),
+                                    interfaces: interfaces, concurrency: 4)
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { scanner.cancel() }
         let rows = scanner.run(progress: { _, _ in })
         XCTAssertFalse(rows.isEmpty)
