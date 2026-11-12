@@ -52,7 +52,7 @@ public struct SubnetScanTarget: Equatable, Sendable {
                       let last = UInt32(endText), last <= 255 else { return nil }
                 end = (start & 0xffffff00) | last
             }
-            guard start <= end, end - start + 1 <= UInt32(maxAddresses) else { return nil }
+            guard start <= end, UInt64(end) - UInt64(start) + 1 <= UInt64(maxAddresses) else { return nil }
             let addresses = (0...(end - start)).map { start + $0 }
             return SubnetScanTarget(addresses: addresses, kind: .range, displayText: normalized)
         }

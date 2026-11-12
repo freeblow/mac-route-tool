@@ -51,5 +51,6 @@ final class SubnetScanTargetTests: XCTestCase {
         XCTAssertNil(SubnetScanTarget.parse("192.168.15.200-1"))      // 倒序
         XCTAssertNil(SubnetScanTarget.parse("192.168.15.1-300"))      // 末段 > 255
         XCTAssertNil(SubnetScanTarget.parse("192.168.15.1-1.2.3.4"))  // 范围跨网段过大检查之外，但超过单段限制
+        XCTAssertNil(SubnetScanTarget.parse("0.0.0.0-255.255.255.255")) // 全范围溢出 UInt32 加法，需返回 nil 而非崩溃
     }
 }
