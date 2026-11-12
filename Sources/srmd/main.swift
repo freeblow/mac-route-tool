@@ -207,6 +207,24 @@ final class Daemon {
             response.daemon = daemonInfo()
             return response
 
+        // 网卡/防火墙变更不允许在 dry-run 下执行
+        case .nicList:
+            var response = SRMResponse(id: request.id, ok: true)
+            response.nics = NICManager.enumerate()
+            return response
+
+        case .nicSetServiceEnabled, .nicSetOrder, .firewallApply, .firewallRemove:
+            if options.dryRun {
+                return SRMResponse(id: request.id, ok: false, error: "守护进程处于 dry-run 模式，不执行系统变更")
+            }
+            return handleNICCommand(command, request)
+
+        case .scanStart, .scanStatus, .scanResult, .scanStop:
+            if options.dryRun {
+                return SRMResponse(id: request.id, ok: false, error: "守护进程处于 dry-run 模式，不执行扫描")
+            }
+            return handleScanCommand(command, request)
+
         case .add, .update:
             guard var spec = request.spec else {
                 return SRMResponse(id: request.id, ok: false, error: "缺少路由定义")
@@ -262,13 +280,58 @@ final class Daemon {
             response.routes = statuses
             response.daemon = daemonInfo()
             return response
-
-        case .nicList, .nicSetServiceEnabled, .nicSetOrder,
-             .firewallApply, .firewallRemove,
-             .scanStart, .scanStatus, .scanResult, .scanStop:
-            // 由后续任务实现（网卡管理 / 防火墙 / 扫描任务）。
-            return SRMResponse(id: request.id, ok: false, error: "命令暂未实现 \(request.command)")
         }
+    }
+
+    private func handleNICCommand(_ command: SRMCommand, _ request: SRMRequest) -> SRMResponse {
+        func response(nics: Bool = false) -> SRMResponse {
+            var response = SRMResponse(id: request.id, ok: true)
+            if nics { response.nics = NICManager.enumerate() }
+            return response
+        }
+        func failure(_ error: Error) -> SRMResponse {
+            SRMResponse(id: request.id, ok: false, error: error.localizedDescription)
+        }
+
+        do {
+            switch command {
+            case .nicSetServiceEnabled:
+                guard let service = request.serviceName, let enabled = request.serviceEnabled else {
+                    return SRMResponse(id: request.id, ok: false, error: "缺少服务名或启停参数")
+                }
+                try NICManager.setServiceEnabled(service, enabled: enabled)
+                NSLog("srmd 网络服务已\(enabled ? "启用" : "禁用")：\(service)")
+                return response(nics: true)
+
+            case .nicSetOrder:
+                guard let order = request.serviceOrder, !order.isEmpty else {
+                    return SRMResponse(id: request.id, ok: false, error: "缺少服务顺序")
+                }
+                try NICManager.setServiceOrder(order)
+                NSLog("srmd 服务顺序已更新：\(order.joined(separator: " → "))")
+                return response(nics: true)
+
+            case .firewallApply:
+                try DiscoveryFirewall.apply()
+                NSLog("srmd 已放行局域网发现端口 53317（PF 锚点 \(DiscoveryFirewall.anchorName)）")
+                return response()
+
+            case .firewallRemove:
+                try DiscoveryFirewall.remove()
+                NSLog("srmd 已移除局域网发现放行规则")
+                return response()
+
+            default:
+                return SRMResponse(id: request.id, ok: false, error: "未支持的网卡命令 \(command.rawValue)")
+            }
+        } catch {
+            return failure(error)
+        }
+    }
+
+    // Task 10 会替换为完整的扫描任务管理。
+    private func handleScanCommand(_ command: SRMCommand, _ request: SRMRequest) -> SRMResponse {
+        SRMResponse(id: request.id, ok: false, error: "扫描任务尚未实现")
     }
 
     private func daemonInfo() -> DaemonInfo {
