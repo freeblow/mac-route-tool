@@ -72,36 +72,6 @@ public struct ScanSummary: Codable, Sendable {
     }
 }
 
-/// 扫描结果统计。
-public enum SubnetScanner {
-    /// 按状态汇总各计数，耗时四舍五入到 0.1 秒。
-    public static func summarize(rows: [ScanRow], interfaceUsed: String?, elapsed: Double) -> ScanSummary {
-        var freeCount = 0
-        var occupiedCount = 0
-        var gatewaySelfCount = 0
-        var reservedCount = 0
-        var unknownCount = 0
-        for row in rows {
-            switch row.state {
-            case .free: freeCount += 1
-            case .occupied: occupiedCount += 1
-            case .gateway, .selfHost: gatewaySelfCount += 1
-            case .reserved: reservedCount += 1
-            case .unknown: unknownCount += 1
-            }
-        }
-        return ScanSummary(
-            freeCount: freeCount,
-            occupiedCount: occupiedCount,
-            gatewaySelfCount: gatewaySelfCount,
-            reservedCount: reservedCount,
-            unknownCount: unknownCount,
-            interfaceUsed: interfaceUsed,
-            elapsedSeconds: (elapsed * 10).rounded() / 10
-        )
-    }
-}
-
 /// 结果导出为 CSV（UTF-8 BOM 由写文件方添加）。
 public enum ScanCSV {
     public static let header = "地址,状态,MAC 地址,响应(ms),说明"
