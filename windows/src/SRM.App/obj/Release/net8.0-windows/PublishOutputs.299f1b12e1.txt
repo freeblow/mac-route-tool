@@ -1,7 +1,0 @@
-F:\SRM-Windows\dist\SRM.exe
-F:\SRM-Windows\dist\SRM.dll
-F:\SRM-Windows\dist\SRM.deps.json
-F:\SRM-Windows\dist\SRM.runtimeconfig.json
-F:\SRM-Windows\dist\SRM.pdb
-F:\SRM-Windows\dist\SRM.Core.dll
-F:\SRM-Windows\dist\SRM.Core.pdb

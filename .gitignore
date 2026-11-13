@@ -12,3 +12,6 @@ windows/_scratch/
 windows/docs/ui-tmp/
 *.lnk
 SRM.app/
+# .NET 编译中间产物
+windows/src/**/bin/
+windows/src/**/obj/
