@@ -6,6 +6,7 @@ struct RouteEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var spec: RouteSpec
+    @State private var preflightError: String?
     private let isNew: Bool
 
     init(spec: RouteSpec, isNew: Bool) {
@@ -73,12 +74,34 @@ struct RouteEditorView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            if let routeWarning {
+                Text(routeWarning)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let preflightError {
+                Text(preflightError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             HStack {
                 Spacer()
                 Button("取消") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(isNew ? "添加" : "保存") {
+                    preflightError = nil
+                    if !spec.direct,
+                       let gateway = spec.normalizedGateway,
+                       let wanted = spec.interfaceName,
+                       !wanted.isEmpty,
+                       let actual = RouteApplier.resolveInterface(for: gateway),
+                       actual != wanted {
+                        preflightError = "网关 \(gateway) 当前经由 \(actual)，与所选接口 \(wanted) 不一致。请检查网关地址或接口。"
+                        return
+                    }
                     model.save(spec, isNew: isNew)
                     dismiss()
                 }
@@ -112,6 +135,23 @@ struct RouteEditorView: View {
         }
         if candidate.normalizedGateway == nil && !candidate.direct {
             return "请填写网关地址，或勾选「直连路由」"
+        }
+        return nil
+    }
+
+    private var routeWarning: String? {
+        guard spec.enabled, spec.prefixLength == 32,
+              let destination = spec.normalizedDestination.split(separator: "/").first,
+              let target = IPv4.parse(String(destination)) else { return nil }
+        for networkInterface in model.interfaces where networkInterface.isUsable && !networkInterface.isLoopback {
+            for cidr in networkInterface.ipv4Addresses {
+                let parts = cidr.split(separator: "/")
+                guard parts.count == 2, let address = IPv4.parse(String(parts[0])),
+                      let prefix = Int(parts[1]) else { continue }
+                if IPv4.network(target, prefix: prefix) == IPv4.network(address, prefix: prefix) {
+                    return "目标已在 \(networkInterface.name) 的直连网段 \(cidr) 中，通常不需要添加静态路由。Ping 通目标不代表填写的网关正确。"
+                }
+            }
         }
         return nil
     }
