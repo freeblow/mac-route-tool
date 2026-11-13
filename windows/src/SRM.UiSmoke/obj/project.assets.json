@@ -1,0 +1,125 @@
+{
+  "version": 3,
+  "targets": {
+    "net8.0-windows7.0": {
+      "SRM/2.7.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "dependencies": {
+          "SRM.Core": "1.0.0"
+        },
+        "compile": {
+          "bin/placeholder/SRM.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/SRM.dll": {}
+        },
+        "frameworkReferences": [
+          "Microsoft.WindowsDesktop.App.WPF"
+        ]
+      },
+      "SRM.Core/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "compile": {
+          "bin/placeholder/SRM.Core.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/SRM.Core.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "SRM/2.7.0": {
+      "type": "project",
+      "path": "../SRM.App/SRM.App.csproj",
+      "msbuildProject": "../SRM.App/SRM.App.csproj"
+    },
+    "SRM.Core/1.0.0": {
+      "type": "project",
+      "path": "../SRM.Core/SRM.Core.csproj",
+      "msbuildProject": "../SRM.Core/SRM.Core.csproj"
+    }
+  },
+  "projectFileDependencyGroups": {
+    "net8.0-windows7.0": [
+      "SRM >= 2.7.0"
+    ]
+  },
+  "packageFolders": {
+    "C:\\Users\\freeblow\\AppData\\Local\\Temp\\dotnet-packages": {},
+    "E:\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
+  },
+  "project": {
+    "version": "1.0.0",
+    "restore": {
+      "projectUniqueName": "F:\\SRM-Windows\\src\\SRM.UiSmoke\\SRM.UiSmoke.csproj",
+      "projectName": "SRM.UiSmoke",
+      "projectPath": "F:\\SRM-Windows\\src\\SRM.UiSmoke\\SRM.UiSmoke.csproj",
+      "packagesPath": "C:\\Users\\freeblow\\AppData\\Local\\Temp\\dotnet-packages",
+      "outputPath": "F:\\SRM-Windows\\src\\SRM.UiSmoke\\obj\\",
+      "projectStyle": "PackageReference",
+      "fallbackFolders": [
+        "E:\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+      ],
+      "configFilePaths": [
+        "F:\\SRM-Windows\\NuGet.Config",
+        "C:\\Users\\freeblow\\AppData\\Roaming\\NuGet\\NuGet.Config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+      ],
+      "originalTargetFrameworks": [
+        "net8.0-windows"
+      ],
+      "sources": {
+        "C:\\Program Files\\dotnet\\library-packs": {}
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "projectReferences": {
+            "F:\\SRM-Windows\\src\\SRM.App\\SRM.App.csproj": {
+              "projectPath": "F:\\SRM-Windows\\src\\SRM.App\\SRM.App.csproj"
+            }
+          }
+        }
+      },
+      "warningProperties": {
+        "warnAsError": [
+          "NU1605"
+        ]
+      },
+      "restoreAuditProperties": {
+        "enableAudit": "true",
+        "auditLevel": "low",
+        "auditMode": "direct"
+      }
+    },
+    "frameworks": {
+      "net8.0-windows7.0": {
+        "targetAlias": "net8.0-windows",
+        "imports": [
+          "net461",
+          "net462",
+          "net47",
+          "net471",
+          "net472",
+          "net48",
+          "net481"
+        ],
+        "assetTargetFallback": true,
+        "warn": true,
+        "frameworkReferences": {
+          "Microsoft.NETCore.App": {
+            "privateAssets": "all"
+          },
+          "Microsoft.WindowsDesktop.App.WPF": {
+            "privateAssets": "none"
+          }
+        },
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.319/PortableRuntimeIdentifierGraph.json"
+      }
+    }
+  }
+}

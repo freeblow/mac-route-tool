@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "id": "preview-default",
+      "destination": "0.0.0.0/0",
+      "gateway": "10.40.81.254",
+      "interfaceIndex": 6,
+      "enabled": true,
+      "note": "默认出口（示例）"
+    },
+    {
+      "id": "preview-office",
+      "destination": "10.30.0.0/16",
+      "gateway": "10.40.81.254",
+      "interfaceIndex": 6,
+      "enabled": true,
+      "note": "公司内网（示例）"
+    },
+    {
+      "id": "preview-lab",
+      "destination": "192.168.99.0/24",
+      "gateway": "10.40.81.254",
+      "enabled": true,
+      "note": "实验室设备（示例）"
+    },
+    {
+      "id": "preview-off",
+      "destination": "172.16.0.0/12",
+      "gateway": "10.40.81.254",
+      "enabled": false,
+      "note": "暂时停用（示例）"
+    }
+  ]
+}

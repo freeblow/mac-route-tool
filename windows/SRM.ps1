@@ -23,6 +23,7 @@ $script:probeResults = @{}
 $script:pendingProbes = @{}
 $script:routeErrors = @{}
 $script:lastSync = [datetime]::MinValue
+$script:nicRefreshUntil = [datetime]::MinValue
 
 function Test-IPv4([string]$address) {
     if ($address -notmatch '^(\d{1,3}\.){3}\d{1,3}$') { return $false }
@@ -125,6 +126,137 @@ function Sync-Routes {
     $script:lastSync = Get-Date
 }
 
+function Get-NicRows {
+    $adapterMap = @{}
+    foreach ($adapter in @(Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue)) {
+        $adapterMap[[int]$adapter.ifIndex] = $adapter
+    }
+    $addressMap = @{}
+    foreach ($address in @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue)) {
+        $text = [string]$address.IPAddress
+        if ($text -like '169.254.*' -or $text -eq '0.0.0.0') { continue }
+        $key = [int]$address.InterfaceIndex
+        if ($addressMap.ContainsKey($key)) { $addressMap[$key] = @($addressMap[$key]) + $text } else { $addressMap[$key] = @($text) }
+    }
+    $gatewayMap = @{}
+    foreach ($route in @(Get-NetRoute -AddressFamily IPv4 -PolicyStore ActiveStore -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue)) {
+        $key = [int]$route.InterfaceIndex
+        if (-not $gatewayMap.ContainsKey($key)) { $gatewayMap[$key] = [string]$route.NextHop }
+    }
+    $interfaces = @{}
+    foreach ($item in @(Get-NetIPInterface -AddressFamily IPv4 -ErrorAction Stop)) {
+        $interfaces[[int]$item.InterfaceIndex] = $item
+    }
+    $indexes = New-Object System.Collections.Generic.List[int]
+    foreach ($key in @($interfaces.Keys)) { [void]$indexes.Add($key) }
+    foreach ($key in @($adapterMap.Keys)) {
+        if ([string]$adapterMap[$key].Status -eq 'Disabled' -and -not $interfaces.ContainsKey($key)) { [void]$indexes.Add($key) }
+    }
+    $rows = @()
+    foreach ($index in @($indexes | Sort-Object -Unique)) {
+        $item = $interfaces[$index]
+        $adapter = $adapterMap[$index]
+        $alias = if ($null -ne $item) { [string]$item.InterfaceAlias } elseif ($null -ne $adapter) { [string]$adapter.Name } else { "接口 $index" }
+        if ($index -eq 1 -or $alias -like 'Loopback*') { continue }
+        $statusText = if ($null -ne $item -and [string]$item.ConnectionState -eq 'Connected') { '已连接' } else { '已断开' }
+        $speedText = ''
+        $modelText = ''
+        if ($null -ne $adapter) {
+            switch ([string]$adapter.Status) {
+                'Up' { $statusText = '已连接' }
+                'Disabled' { $statusText = '已禁用' }
+                'Not Present' { $statusText = '未安装' }
+                default { $statusText = [string]$adapter.Status }
+            }
+            $modelText = [string]$adapter.InterfaceDescription
+            if ($adapter.Virtual) { $modelText = "$modelText · 虚拟" }
+            $linkSpeed = $adapter.LinkSpeed
+            if ($null -ne $linkSpeed -and $linkSpeed -is [string]) {
+                $speedText = $linkSpeed
+            } elseif ($null -ne $linkSpeed) {
+                $bitsPerSecond = 0
+                try { $bitsPerSecond = [double]$linkSpeed } catch { $bitsPerSecond = 0 }
+                if ($bitsPerSecond -ge 1000000000) { $speedText = '{0:0.#} Gbps' -f ($bitsPerSecond / 1000000000) }
+                elseif ($bitsPerSecond -gt 0) { $speedText = '{0:0.#} Mbps' -f ($bitsPerSecond / 1000000) }
+            }
+        }
+        $metric = $null
+        $automatic = $null
+        if ($null -ne $item) {
+            $metric = [int]$item.InterfaceMetric
+            $automatic = @('true', 'enabled', '1') -contains ([string]$item.AutomaticMetric).ToLowerInvariant()
+        }
+        $rows += [pscustomobject]@{
+            index = $index
+            name = $alias
+            status = $statusText
+            speed = $speedText
+            address = (@($addressMap[$index]) -join ' / ')
+            gateway = if ($gatewayMap.ContainsKey($index)) { $gatewayMap[$index] } else { '' }
+            metric = $metric
+            metricText = if ($null -eq $metric) { '—' } elseif ($automatic) { "$metric · 自动" } else { "$metric · 手动" }
+            model = $modelText
+            automatic = $automatic
+            disabled = ($null -ne $adapter -and [string]$adapter.Status -eq 'Disabled')
+        }
+    }
+    return @($rows | Sort-Object -Property @{ Expression = { if ($null -eq $_.metric) { 100000 } else { [int]$_.metric } } }, @{ Expression = { [string]$_.name } })
+}
+
+function Set-NicMetric([int]$index, [int]$metric) {
+    try {
+        Set-NetIPInterface -InterfaceIndex $index -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric $metric -ErrorAction Stop | Out-Null
+    } catch {
+        Set-NetIPInterface -InterfaceIndex $index -AddressFamily IPv4 -InterfaceMetric $metric -ErrorAction Stop | Out-Null
+    }
+    try { Set-NetIPInterface -InterfaceIndex $index -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric $metric -ErrorAction Stop | Out-Null } catch { }
+}
+
+function Reset-NicMetric([int]$index) {
+    Set-NetIPInterface -InterfaceIndex $index -AddressFamily IPv4 -AutomaticMetric Enabled -ErrorAction Stop | Out-Null
+    try { Set-NetIPInterface -InterfaceIndex $index -AddressFamily IPv6 -AutomaticMetric Enabled -ErrorAction Stop | Out-Null } catch { }
+}
+
+function Set-NicEnabled([int]$index, [bool]$enabled) {
+    $adapter = @(Get-NetAdapter -InterfaceIndex $index -IncludeHidden -ErrorAction Stop)
+    if ($adapter.Count -eq 0) { throw "找不到接口序号 $index 对应的网卡。" }
+    if ($enabled) {
+        $adapter | Enable-NetAdapter -Confirm:$false -ErrorAction Stop | Out-Null
+    } else {
+        $adapter | Disable-NetAdapter -Confirm:$false -ErrorAction Stop | Out-Null
+    }
+}
+
+function Move-Nic([int]$index, [int]$step) {
+    $rows = @(Get-NicRows)
+    $position = -1
+    for ($i = 0; $i -lt $rows.Count; $i++) {
+        if ([int]$rows[$i].index -eq $index) { $position = $i; break }
+    }
+    if ($position -lt 0) { return }
+    if ($null -eq $rows[$position].metric) { throw '该网卡已禁用或未启用 IPv4，无法调整优先级；可在本页点“启用网卡”后再试。' }
+    $peerPosition = $position + $step
+    if ($peerPosition -lt 0 -or $peerPosition -ge $rows.Count) { return }
+    $current = $rows[$position]
+    $peer = $rows[$peerPosition]
+    if ($null -eq $peer.metric) { return }
+    if ($step -lt 0) {
+        if ([int]$peer.metric -le 1) {
+            Set-NicMetric -index ([int]$peer.index) -metric 2
+            Set-NicMetric -index ([int]$current.index) -metric 1
+        } else {
+            Set-NicMetric -index ([int]$current.index) -metric ([int]$peer.metric - 1)
+        }
+    } else {
+        if ([int]$peer.metric -ge 9999) {
+            Set-NicMetric -index ([int]$peer.index) -metric 9998
+            Set-NicMetric -index ([int]$current.index) -metric 9999
+        } else {
+            Set-NicMetric -index ([int]$current.index) -metric ([int]$peer.metric + 1)
+        }
+    }
+}
+
 function Get-ProbeTarget($route) {
     if ($route.destination.EndsWith('/32')) { return @{ address = $route.destination.Split('/')[0]; label = '目标' } }
     return @{ address = [string]$route.gateway; label = '网关' }
@@ -218,7 +350,7 @@ function Show-RouteEditor($existing) {
             if ($fields.interfaceIndex.Text.Trim()) {
                 $number = 0
                 if (-not [int]::TryParse($fields.interfaceIndex.Text.Trim(), [ref]$number) -or $number -le 0) {
-                    throw '接口序号必须是正整数。可在 Windows 网络设置或 route print 中查看。'
+                    throw '接口序号必须是正整数。可在“网卡优先级”页的“序号”列中查看。'
                 }
                 $index = $number
             }
@@ -244,21 +376,31 @@ function Show-RouteEditor($existing) {
 
 Load-Routes
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'SRM · Windows 静态路由'
+$form.Text = 'SRM · Windows 路由与网卡'
 $form.StartPosition = 'CenterScreen'
-$form.Size = New-Object System.Drawing.Size(920, 480)
-$form.MinimumSize = New-Object System.Drawing.Size(720, 380)
+$form.Size = New-Object System.Drawing.Size(940, 560)
+$form.MinimumSize = New-Object System.Drawing.Size(780, 480)
+
+$tabs = New-Object System.Windows.Forms.TabControl
+$tabs.Dock = 'Fill'
+$routePage = New-Object System.Windows.Forms.TabPage
+$routePage.Text = '静态路由'
+$nicPage = New-Object System.Windows.Forms.TabPage
+$nicPage.Text = '网卡优先级'
+[void]$tabs.TabPages.Add($routePage)
+[void]$tabs.TabPages.Add($nicPage)
+$form.Controls.Add($tabs)
 
 $addButton = New-Button '添加' 12 70
 $editButton = New-Button '编辑' 88 70
 $toggleButton = New-Button '启用 / 停用' 164 100
 $deleteButton = New-Button '删除' 270 70
 $syncButton = New-Button '重新同步' 346 100
-foreach ($button in @($addButton, $editButton, $toggleButton, $deleteButton, $syncButton)) { $form.Controls.Add($button) }
+foreach ($button in @($addButton, $editButton, $toggleButton, $deleteButton, $syncButton)) { $routePage.Controls.Add($button) }
 
 $grid = New-Object System.Windows.Forms.DataGridView
 $grid.Location = New-Object System.Drawing.Point(12, 52)
-$grid.Size = New-Object System.Drawing.Size(880, 350)
+$grid.Size = New-Object System.Drawing.Size(880, 400)
 $grid.Anchor = 'Top,Bottom,Left,Right'
 $grid.ReadOnly = $true
 $grid.AllowUserToAddRows = $false
@@ -279,14 +421,141 @@ $testColumn.Text = '测试'
 $testColumn.UseColumnTextForButtonValue = $true
 $testColumn.FillWeight = 60
 [void]$grid.Columns.Add($testColumn)
-$form.Controls.Add($grid)
+$routePage.Controls.Add($grid)
 
 $hint = New-Object System.Windows.Forms.Label
 $hint.Text = '绿色表示路由已写入；“测试结果”单独显示 ICMP 响应。网段路由测试网关，主机路由测试目标。'
-$hint.Location = New-Object System.Drawing.Point(12, 410)
+$hint.Location = New-Object System.Drawing.Point(12, 460)
 $hint.Size = New-Object System.Drawing.Size(880, 22)
 $hint.Anchor = 'Bottom,Left,Right'
-$form.Controls.Add($hint)
+$routePage.Controls.Add($hint)
+
+$nicUpButton = New-Button '提高优先级' 12 100
+$nicDownButton = New-Button '降低优先级' 118 100
+$nicAutoButton = New-Button '恢复自动跃点' 224 115
+$nicRefreshButton = New-Button '刷新列表' 345 85
+$nicDisableButton = New-Button '禁用网卡' 440 90
+$nicEnableButton = New-Button '启用网卡' 536 90
+foreach ($button in @($nicUpButton, $nicDownButton, $nicAutoButton, $nicRefreshButton, $nicDisableButton, $nicEnableButton)) { $nicPage.Controls.Add($button) }
+
+$nicGrid = New-Object System.Windows.Forms.DataGridView
+$nicGrid.Location = New-Object System.Drawing.Point(12, 52)
+$nicGrid.Size = New-Object System.Drawing.Size(880, 400)
+$nicGrid.Anchor = 'Top,Bottom,Left,Right'
+$nicGrid.ReadOnly = $true
+$nicGrid.AllowUserToAddRows = $false
+$nicGrid.AllowUserToDeleteRows = $false
+$nicGrid.MultiSelect = $false
+$nicGrid.SelectionMode = 'FullRowSelect'
+$nicGrid.RowHeadersVisible = $false
+$nicGrid.AutoSizeColumnsMode = 'Fill'
+foreach ($item in @(@('优先级', 55), @('网卡', 105), @('序号', 50), @('状态', 70), @('速度', 75), @('IPv4 地址', 110), @('默认网关', 100), @('跃点数', 85), @('型号', 170))) {
+    $column = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+    $column.HeaderText = $item[0]
+    $column.FillWeight = [int]$item[1]
+    [void]$nicGrid.Columns.Add($column)
+}
+$nicPage.Controls.Add($nicGrid)
+$nicTopFont = New-Object System.Drawing.Font($nicGrid.Font, [System.Drawing.FontStyle]::Bold)
+
+$nicHint = New-Object System.Windows.Forms.Label
+$nicHint.Text = '跃点数越小越优先（IPv4 / IPv6 同时生效）；“禁用 / 启用网卡”相当于网络连接里的右键禁用、启用。'
+$nicHint.Location = New-Object System.Drawing.Point(12, 460)
+$nicHint.Size = New-Object System.Drawing.Size(880, 22)
+$nicHint.Anchor = 'Bottom,Left,Right'
+$nicPage.Controls.Add($nicHint)
+
+function Update-PageLayout($page, $listControl, $hintLabel) {
+    $area = $page.DisplayRectangle
+    $width = [Math]::Max(360, $area.Width - 24)
+    $height = [Math]::Max(140, $area.Height - 84)
+    $listControl.Size = New-Object System.Drawing.Size($width, $height)
+    $hintLabel.Location = New-Object System.Drawing.Point(12, ($listControl.Location.Y + $height + 8))
+    $hintLabel.Size = New-Object System.Drawing.Size($width, 22)
+}
+
+function Get-SelectedNic {
+    if ($nicGrid.SelectedRows.Count -eq 0) { return $null }
+    return $nicGrid.SelectedRows[0].Tag
+}
+
+function Update-NicButtons {
+    $selected = Get-SelectedNic
+    $hasSelection = $null -ne $selected
+    $nicDisableButton.Enabled = $hasSelection -and (-not $selected.disabled)
+    $nicEnableButton.Enabled = $hasSelection -and $selected.disabled
+}
+
+function Refresh-NicGrid {
+    $selectedIndex = $null
+    $selected = Get-SelectedNic
+    if ($null -ne $selected) { $selectedIndex = [int]$selected.index }
+    $nicGrid.Rows.Clear()
+    $position = 0
+    foreach ($item in @(Get-NicRows)) {
+        $position++
+        $priorityText = if ($null -eq $item.metric) { '—' } else { [string]$position }
+        $rowIndex = $nicGrid.Rows.Add($priorityText, $item.name, [string]$item.index, $item.status, $item.speed, $item.address, $item.gateway, $item.metricText, $item.model)
+        $row = $nicGrid.Rows[$rowIndex]
+        $row.Tag = $item
+        $row.Cells[8].ToolTipText = [string]$item.model
+        $row.Cells[3].Style.ForeColor = if ($item.status -eq '已连接') { [System.Drawing.Color]::ForestGreen } else { [System.Drawing.Color]::Gray }
+        if ([string]$item.address -eq '') { $row.Cells[5].Style.ForeColor = [System.Drawing.Color]::Gray }
+        if ($item.disabled) { $row.Cells[1].Style.ForeColor = [System.Drawing.Color]::Gray }
+        if ($position -eq 1 -and $null -ne $item.metric) { $row.Cells[0].Style.Font = $nicTopFont }
+        if ($null -ne $selectedIndex -and [int]$item.index -eq $selectedIndex) { $row.Selected = $true }
+    }
+    Update-NicButtons
+}
+
+$nicUpButton.Add_Click({
+    $selected = Get-SelectedNic
+    if ($null -eq $selected) { return }
+    try {
+        Move-Nic -index ([int]$selected.index) -step -1
+        Refresh-NicGrid
+    } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '调整失败') | Out-Null }
+})
+$nicDownButton.Add_Click({
+    $selected = Get-SelectedNic
+    if ($null -eq $selected) { return }
+    try {
+        Move-Nic -index ([int]$selected.index) -step 1
+        Refresh-NicGrid
+    } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '调整失败') | Out-Null }
+})
+$nicAutoButton.Add_Click({
+    $selected = Get-SelectedNic
+    if ($null -eq $selected) { return }
+    try {
+        Reset-NicMetric -index ([int]$selected.index)
+        Refresh-NicGrid
+    } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '恢复失败') | Out-Null }
+})
+$nicRefreshButton.Add_Click({
+    try { Refresh-NicGrid } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '读取网卡失败') | Out-Null }
+})
+$nicDisableButton.Add_Click({
+    $selected = Get-SelectedNic
+    if ($null -eq $selected) { return }
+    $question = ('禁用“{0}”？{1}{1}该网卡会立即断开，禁用期间不能联网；需要时可在本页点“启用网卡”恢复。' -f $selected.name, [System.Environment]::NewLine)
+    if ([System.Windows.Forms.MessageBox]::Show($question, '确认禁用', 'YesNo', 'Warning') -ne 'Yes') { return }
+    try {
+        Set-NicEnabled -index ([int]$selected.index) -enabled $false
+        Refresh-NicGrid
+        $script:nicRefreshUntil = (Get-Date).AddSeconds(8)
+    } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '禁用失败') | Out-Null }
+})
+$nicEnableButton.Add_Click({
+    $selected = Get-SelectedNic
+    if ($null -eq $selected) { return }
+    try {
+        Set-NicEnabled -index ([int]$selected.index) -enabled $true
+        Refresh-NicGrid
+        $script:nicRefreshUntil = (Get-Date).AddSeconds(8)
+    } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '启用失败') | Out-Null }
+})
+$nicGrid.Add_SelectionChanged({ Update-NicButtons })
 
 function Get-SelectedRoute {
     if ($grid.SelectedRows.Count -eq 0) { return $null }
@@ -373,8 +642,23 @@ $timer.Add_Tick({
     Update-Probes
     if (((Get-Date) - $script:lastSync).TotalSeconds -ge 10) { Sync-Routes }
     Refresh-Grid
+    if ($tabs.SelectedTab -eq $nicPage -and (Get-Date) -lt $script:nicRefreshUntil) {
+        try { Refresh-NicGrid } catch { }
+    }
 })
-$form.Add_Shown({ Sync-Routes; Refresh-Grid; $timer.Start() })
+$tabs.Add_SelectedIndexChanged({
+    if ($tabs.SelectedTab -ne $nicPage) { return }
+    try { Refresh-NicGrid } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '读取网卡失败') | Out-Null }
+})
+$routePage.Add_Resize({ Update-PageLayout $routePage $grid $hint })
+$nicPage.Add_Resize({ Update-PageLayout $nicPage $nicGrid $nicHint })
+$form.Add_Shown({
+    Update-PageLayout $routePage $grid $hint
+    Update-PageLayout $nicPage $nicGrid $nicHint
+    Sync-Routes
+    Refresh-Grid
+    $timer.Start()
+})
 $form.Add_FormClosed({
     $timer.Stop()
     foreach ($pending in $script:pendingProbes.Values) { $pending.ping.Dispose() }

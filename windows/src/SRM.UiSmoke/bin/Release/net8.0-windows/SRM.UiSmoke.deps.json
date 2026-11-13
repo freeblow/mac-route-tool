@@ -1,0 +1,63 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "SRM.UiSmoke/1.0.0": {
+        "dependencies": {
+          "SRM": "2.7.0",
+          "SRM.Reference": "2.7.0.0"
+        },
+        "runtime": {
+          "SRM.UiSmoke.dll": {}
+        }
+      },
+      "SRM/2.7.0": {
+        "dependencies": {
+          "SRM.Core": "1.0.0"
+        },
+        "runtime": {
+          "SRM.dll": {}
+        }
+      },
+      "SRM.Core/1.0.0": {
+        "runtime": {
+          "SRM.Core.dll": {}
+        }
+      },
+      "SRM.Reference/2.7.0.0": {
+        "runtime": {
+          "SRM.dll": {
+            "assemblyVersion": "2.7.0.0",
+            "fileVersion": "2.7.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "SRM.UiSmoke/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "SRM/2.7.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "SRM.Core/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "SRM.Reference/2.7.0.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

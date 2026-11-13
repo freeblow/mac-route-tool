@@ -1,0 +1,7 @@
+F:\SRM-Windows\dist-portable\app\SRM.exe
+F:\SRM-Windows\dist-portable\app\SRM.dll
+F:\SRM-Windows\dist-portable\app\SRM.deps.json
+F:\SRM-Windows\dist-portable\app\SRM.runtimeconfig.json
+F:\SRM-Windows\dist-portable\app\SRM.pdb
+F:\SRM-Windows\dist-portable\app\SRM.Core.dll
+F:\SRM-Windows\dist-portable\app\SRM.Core.pdb

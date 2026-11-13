@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>SRM.App</RootNamespace>
+    <AssemblyName>SRM</AssemblyName>
+    <Version>2.7.0</Version>
+    <ApplicationIcon>SRM.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SRM.Core\SRM.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="SRM.ico" />
+  </ItemGroup>
+
+</Project>

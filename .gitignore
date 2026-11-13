@@ -5,3 +5,10 @@ opencode.json
 *.xcodeproj
 .DS_Store
 *.log
+# Windows 构建产物与本地杂项
+windows/dist/
+windows/dist-portable/
+windows/_scratch/
+windows/docs/ui-tmp/
+*.lnk
+SRM.app/

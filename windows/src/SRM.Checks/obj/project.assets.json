@@ -1,0 +1,101 @@
+{
+  "version": 3,
+  "targets": {
+    "net8.0-windows7.0": {
+      "SRM.Core/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "compile": {
+          "bin/placeholder/SRM.Core.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/SRM.Core.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "SRM.Core/1.0.0": {
+      "type": "project",
+      "path": "../SRM.Core/SRM.Core.csproj",
+      "msbuildProject": "../SRM.Core/SRM.Core.csproj"
+    }
+  },
+  "projectFileDependencyGroups": {
+    "net8.0-windows7.0": [
+      "SRM.Core >= 1.0.0"
+    ]
+  },
+  "packageFolders": {
+    "C:\\Users\\freeblow\\AppData\\Local\\Temp\\dotnet-packages": {},
+    "E:\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
+  },
+  "project": {
+    "version": "1.0.0",
+    "restore": {
+      "projectUniqueName": "F:\\SRM-Windows\\src\\SRM.Checks\\SRM.Checks.csproj",
+      "projectName": "SRM.Checks",
+      "projectPath": "F:\\SRM-Windows\\src\\SRM.Checks\\SRM.Checks.csproj",
+      "packagesPath": "C:\\Users\\freeblow\\AppData\\Local\\Temp\\dotnet-packages",
+      "outputPath": "F:\\SRM-Windows\\src\\SRM.Checks\\obj\\",
+      "projectStyle": "PackageReference",
+      "fallbackFolders": [
+        "E:\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+      ],
+      "configFilePaths": [
+        "F:\\SRM-Windows\\NuGet.Config",
+        "C:\\Users\\freeblow\\AppData\\Roaming\\NuGet\\NuGet.Config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+      ],
+      "originalTargetFrameworks": [
+        "net8.0-windows"
+      ],
+      "sources": {
+        "C:\\Program Files\\dotnet\\library-packs": {}
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "projectReferences": {
+            "F:\\SRM-Windows\\src\\SRM.Core\\SRM.Core.csproj": {
+              "projectPath": "F:\\SRM-Windows\\src\\SRM.Core\\SRM.Core.csproj"
+            }
+          }
+        }
+      },
+      "warningProperties": {
+        "warnAsError": [
+          "NU1605"
+        ]
+      },
+      "restoreAuditProperties": {
+        "enableAudit": "true",
+        "auditLevel": "low",
+        "auditMode": "direct"
+      }
+    },
+    "frameworks": {
+      "net8.0-windows7.0": {
+        "targetAlias": "net8.0-windows",
+        "imports": [
+          "net461",
+          "net462",
+          "net47",
+          "net471",
+          "net472",
+          "net48",
+          "net481"
+        ],
+        "assetTargetFallback": true,
+        "warn": true,
+        "frameworkReferences": {
+          "Microsoft.NETCore.App": {
+            "privateAssets": "all"
+          }
+        },
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.319/PortableRuntimeIdentifierGraph.json"
+      }
+    }
+  }
+}
