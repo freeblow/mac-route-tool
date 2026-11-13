@@ -255,6 +255,7 @@ struct ScanRowView: View {
         HStack(spacing: 10) {
             Text(row.address)
                 .font(.system(size: 12, design: .monospaced))
+                .textSelection(.enabled)
                 .frame(width: 110, alignment: .leading)
 
             Text(row.state.displayText)
@@ -266,6 +267,7 @@ struct ScanRowView: View {
                 .font(.caption)
                 .fontDesign(.monospaced)
                 .foregroundStyle(.secondary)
+                .textSelection(.enabled)
                 .frame(width: 120, alignment: .leading)
 
             Text(row.rttMs.map { String(format: "%.1f ms", $0) } ?? "—")
@@ -277,6 +279,7 @@ struct ScanRowView: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
+                .textSelection(.enabled)
 
             Spacer(minLength: 0)
         }
