@@ -10,11 +10,13 @@ public enum DiscoveryFirewall {
 
     /// 锚点规则文件内容。
     public static func anchorRules() -> String {
+        // 必须以换行结尾：Swift 多行字面量不含结尾换行，pfctl 解析末行未终结的
+        // 规则文件会报 syntax error（行号还会错位到引用它的 pf.conf 上）。
         """
         \(marker)
         pass in quick proto tcp from any to any port 53317 keep state label "SRM LocalSend"
         pass in quick proto udp from any to any port 53317 keep state label "SRM LocalSend"
-        """
+        """ + "\n"
     }
 
     /// 在 pf.conf 末尾追加锚点引用；已存在时返回 nil（幂等）。

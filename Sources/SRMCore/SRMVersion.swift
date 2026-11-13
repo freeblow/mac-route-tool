@@ -5,7 +5,7 @@ import Foundation
 /// 一路报「未知命令」。
 public enum SRMVersion {
     /// 随本版本分发的工具版本号（srmd / srm / GUI 三端一致）。
-    public static let expected = "0.2.1"
+    public static let expected = "0.2.2"
 
     /// 解析「主.次.修订」版本号，缺省分量按 0 处理；无法解析返回 nil。
     public static func parse(_ value: String) -> (major: Int, minor: Int, patch: Int)? {

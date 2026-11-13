@@ -98,4 +98,37 @@ final class RouteManagerIntegrationTests: XCTestCase {
             )
         }
     }
+
+    /// 守护进程里 accept 线程（IPC 请求）与定时器队列（tick reconcile）并发调用
+    /// RouteManager：曾经无锁并发写 managed 字典导致 SIGSEGV（srmd 数十次崩溃）。
+    /// 多线程并发压测所有公开接口，验证加锁后不崩、状态一致。
+    func testConcurrentAccessStress() throws {
+        let (manager, directory) = try makeManager(dryRun: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+
+        let saved = try manager.add(discoverySpec)
+        let iterations = 200
+        let workers = 8
+        let done = DispatchSemaphore(value: 0)
+        for worker in 0..<workers {
+            Thread.detachNewThread {
+                for step in 0..<iterations {
+                    switch worker % 4 {
+                    case 0: _ = manager.reconcile()
+                    case 1: _ = manager.config.routes
+                    case 2: _ = try? manager.update(saved)
+                    default:
+                        _ = manager.lastError
+                        _ = manager.lastReconcile
+                    }
+                }
+                done.signal()
+            }
+        }
+        for _ in 0..<workers { done.wait() }
+
+        XCTAssertEqual(manager.config.routes.count, 1)
+        XCTAssertTrue(manager.config.routes.contains { $0.id == saved.id })
+        XCTAssertEqual(manager.reconcile().count, 1)
+    }
 }

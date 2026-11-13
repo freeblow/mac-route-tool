@@ -4,6 +4,12 @@ import Foundation
 ///
 /// The manager never deletes kernel routes it did not create itself, so DHCP
 /// and VPN supplied entries stay untouched.
+///
+/// 线程安全：守护进程里本类的公开接口会被两个线程并发调用——
+/// SocketServer 的 accept 线程处理 IPC 请求，定时器队列周期执行
+/// reconcile。所有公开状态（config/managed/lastError/lastReconcile）
+/// 都由 `lock` 保护；内部方法假定持锁调用，禁止在持锁期间再调公开方法
+/// （NSLock 不可重入，applyAll 用 reconcileLocked 而非 reconcile）。
 public final class RouteManager {
     public struct Options: Sendable {
         public var configPath: String
@@ -22,31 +28,49 @@ public final class RouteManager {
         }
     }
 
-    public private(set) var config: SRMConfig
-    public private(set) var lastError: String?
-    public private(set) var lastReconcile: Date?
+    private let lock = NSLock()
+    private var configStorage: SRMConfig
+    private var lastErrorStorage: String?
+    private var lastReconcileStorage: Date?
+    private var managed: [String: RouteSpec] = [:]
+
+    public var config: SRMConfig {
+        lock.lock(); defer { lock.unlock() }
+        return configStorage
+    }
+
+    public var lastError: String? {
+        lock.lock(); defer { lock.unlock() }
+        return lastErrorStorage
+    }
+
+    public var lastReconcile: Date? {
+        lock.lock(); defer { lock.unlock() }
+        return lastReconcileStorage
+    }
 
     private let store: ConfigStore
     private let options: Options
-    private var managed: [String: RouteSpec] = [:]
     private let statePath: String
 
     public init(options: Options = Options()) throws {
         self.options = options
         self.store = ConfigStore(path: options.configPath)
         self.statePath = "\(options.stateDirectory)/managed.json"
-        self.config = try store.load()
+        self.configStorage = try store.load()
         loadManagedState()
     }
 
     // MARK: - Configuration
 
     public func saveConfig() throws {
-        try store.save(config)
+        lock.lock(); defer { lock.unlock() }
+        try store.save(configStorage)
     }
 
     @discardableResult
     public func add(_ spec: RouteSpec) throws -> RouteSpec {
+        lock.lock(); defer { lock.unlock() }
         let sanitized = spec.sanitized()
         try sanitized.validate()
         if sanitized.direct {
@@ -61,33 +85,35 @@ public final class RouteManager {
                 throw RouteValidationError.badGateway("")
             }
         }
-        if let index = config.routes.firstIndex(where: { $0.id == sanitized.id }) {
-            config.routes[index] = sanitized
+        if let index = configStorage.routes.firstIndex(where: { $0.id == sanitized.id }) {
+            configStorage.routes[index] = sanitized
         } else {
-            config.routes.append(sanitized)
+            configStorage.routes.append(sanitized)
         }
-        try saveConfig()
+        try store.save(configStorage)
         return sanitized
     }
 
     @discardableResult
     public func update(_ spec: RouteSpec) throws -> RouteSpec {
-        guard let index = config.routes.firstIndex(where: { $0.id == spec.id }) else {
+        lock.lock(); defer { lock.unlock() }
+        guard let index = configStorage.routes.firstIndex(where: { $0.id == spec.id }) else {
             throw ManagerError.unknownRoute(spec.id)
         }
         let sanitized = spec.sanitized()
         try sanitized.validate()
-        config.routes[index] = sanitized
-        try saveConfig()
+        configStorage.routes[index] = sanitized
+        try store.save(configStorage)
         return sanitized
     }
 
     public func delete(id: UUID) throws {
-        guard let index = config.routes.firstIndex(where: { $0.id == id }) else {
+        lock.lock(); defer { lock.unlock() }
+        guard let index = configStorage.routes.firstIndex(where: { $0.id == id }) else {
             throw ManagerError.unknownRoute(id)
         }
-        let removed = config.routes.remove(at: index)
-        try saveConfig()
+        let removed = configStorage.routes.remove(at: index)
+        try store.save(configStorage)
         // Drop the kernel entry if we own it.
         if managed[removed.matchKey] != nil {
             managed[removed.matchKey] = nil
@@ -101,13 +127,14 @@ public final class RouteManager {
     }
 
     public func setEnabled(id: UUID, enabled: Bool) throws {
-        guard let index = config.routes.firstIndex(where: { $0.id == id }) else {
+        lock.lock(); defer { lock.unlock() }
+        guard let index = configStorage.routes.firstIndex(where: { $0.id == id }) else {
             throw ManagerError.unknownRoute(id)
         }
-        config.routes[index].enabled = enabled
-        try saveConfig()
-        if !enabled, managed[config.routes[index].matchKey] != nil {
-            let spec = config.routes[index]
+        configStorage.routes[index].enabled = enabled
+        try store.save(configStorage)
+        if !enabled, managed[configStorage.routes[index].matchKey] != nil {
+            let spec = configStorage.routes[index]
             managed[spec.matchKey] = nil
             saveManagedState()
             if !options.dryRun {
@@ -123,15 +150,21 @@ public final class RouteManager {
     /// Compares the configuration with the kernel table and repairs the difference.
     @discardableResult
     public func reconcile() -> [RouteStatus] {
-        defer { lastReconcile = Date() }
+        lock.lock(); defer { lock.unlock() }
+        return reconcileLocked()
+    }
+
+    /// 持锁版本的 reconcile：供 applyAll 等已在锁内的路径复用。
+    private func reconcileLocked() -> [RouteStatus] {
+        defer { lastReconcileStorage = Date() }
 
         let kernelRoutes: [KernelRoute]
         do {
             kernelRoutes = try RouteTableReader.readIPv4()
         } catch {
             let message = error.localizedDescription
-            lastError = message
-            return config.routes.map { spec in
+            lastErrorStorage = message
+            return configStorage.routes.map { spec in
                 RouteStatus(
                     spec: spec,
                     state: spec.enabled ? .failed : .disabled,
@@ -144,7 +177,7 @@ public final class RouteManager {
         let interfaces = NetworkInterfaces.all()
         var statuses: [RouteStatus] = []
 
-        for spec in config.routes {
+        for spec in configStorage.routes {
             if !spec.enabled {
                 statuses.append(RouteStatus(spec: spec, state: .disabled, message: "已停用", resolvedInterface: nil, managed: false))
                 continue
@@ -263,13 +296,13 @@ public final class RouteManager {
             saveManagedState()
             return RouteStatus(spec: spec, state: .active, message: nil, resolvedInterface: resolvedInterface, managed: true)
         }
-        lastError = outcome.message
+        lastErrorStorage = outcome.message
         return RouteStatus(spec: spec, state: .failed, message: outcome.message, resolvedInterface: resolvedInterface, managed: false)
     }
 
     /// Removes kernel routes that we created earlier but that are no longer configured.
     private func pruneOrphans(kernelRoutes: [KernelRoute]) {
-        let configuredKeys = Set(config.routes.filter { $0.enabled }.map(\.matchKey))
+        let configuredKeys = Set(configStorage.routes.filter { $0.enabled }.map(\.matchKey))
         for (key, spec) in managed where !configuredKeys.contains(key) {
             if !options.dryRun {
                 for route in kernelRoutes where route.matches(spec) {
@@ -284,19 +317,21 @@ public final class RouteManager {
     /// Force a full re-write of every enabled route.
     @discardableResult
     public func applyAll() -> [RouteStatus] {
-        guard !options.dryRun else { return reconcile() }
-        for spec in config.routes where spec.enabled {
+        lock.lock(); defer { lock.unlock() }
+        guard !options.dryRun else { return reconcileLocked() }
+        for spec in configStorage.routes where spec.enabled {
             for route in (try? RouteTableReader.readIPv4()) ?? [] where route.matches(spec) {
                 _ = RouteApplier.remove(route)
             }
         }
         managed.removeAll()
         saveManagedState()
-        return reconcile()
+        return reconcileLocked()
     }
 
     // MARK: - Managed state persistence
 
+    /// 只在 init（单线程阶段）或持锁时调用。
     private func loadManagedState() {
         guard let data = FileManager.default.contents(atPath: statePath),
               let specs = try? JSONDecoder().decode([RouteSpec].self, from: data) else { return }
@@ -305,6 +340,7 @@ public final class RouteManager {
         }
     }
 
+    /// 持锁时调用（dry-run 下跳过写盘）。
     private func saveManagedState() {
         guard !options.dryRun else { return }
         try? FileManager.default.createDirectory(atPath: options.stateDirectory, withIntermediateDirectories: true)

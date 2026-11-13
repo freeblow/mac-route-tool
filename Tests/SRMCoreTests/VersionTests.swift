@@ -30,6 +30,6 @@ final class SRMVersionTests: XCTestCase {
     }
 
     func testExpectedVersionMatchesShippedTools() {
-        XCTAssertEqual(SRMVersion.expected, "0.2.1")
+        XCTAssertEqual(SRMVersion.expected, "0.2.2")
     }
 }

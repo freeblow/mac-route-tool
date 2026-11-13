@@ -64,7 +64,13 @@ final class Daemon {
     private let queue = DispatchQueue(label: "srm.daemon")
     private var timer: DispatchSourceTimer?
     private var startedAt = Date()
-    private var lastError: String?
+    // lastError 由定时器队列写、accept 线程（daemonInfo）读，需加锁保护。
+    private let stateLock = NSLock()
+    private var lastErrorStorage: String?
+    private var lastError: String? {
+        get { stateLock.lock(); defer { stateLock.unlock() }; return lastErrorStorage }
+        set { stateLock.lock(); defer { stateLock.unlock() }; lastErrorStorage = newValue }
+    }
     private let scanJobs = ScanJobManager()
 
     init(options: Options) throws {

@@ -256,6 +256,12 @@ final class DiscoveryFirewallTests: XCTestCase {
         XCTAssertTrue(rules.contains("pass in"))
     }
 
+    /// pfctl 要求规则文件以换行结尾：Swift 多行字面量不带结尾换行，缺了它
+    /// pfctl 报 syntax error（行号还错位到 pf.conf 上，曾让「放行防火墙」失败）。
+    func testAnchorRulesEndsWithNewline() {
+        XCTAssertTrue(DiscoveryFirewall.anchorRules().hasSuffix("\n"))
+    }
+
     func testPfConfWithAnchor() {
         let updated = DiscoveryFirewall.pfConfWithAnchor(sampleConf)
         XCTAssertNotNil(updated)
