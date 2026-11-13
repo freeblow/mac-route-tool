@@ -135,7 +135,7 @@ struct NICPaneView: View {
     private var watchSummary: String {
         guard let result = model.watchResult else { return "" }
         if result.aliasCounts.isEmpty {
-            return "没有听到任何 LocalSend 设备的宣告。如果其它设备正在使用 LocalSend，\n说明本机收不到组播（224.0.0.167:53317）——这就是发现不通的方向。"
+            return "没有听到任何局域网设备的宣告。局域网发现靠组播（224.0.0.167:53317）互相宣告，\n使用同一组播协议的应用（如 LocalSend）都会在这里被听到；\n一个都没听到，说明本机收不到该组播——这就是发现不通的方向。"
         }
         let lines = result.aliasCounts
             .sorted { $0.value > $1.value }
