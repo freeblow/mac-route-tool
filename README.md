@@ -1,6 +1,6 @@
 # SRM · 静态路由管理器
 
-macOS 版使用菜单栏 App 和守护进程管理静态路由。Windows 版位于 `windows/`，双击 `SRM.cmd` 即可打开图形界面。
+macOS 版使用菜单栏 App 和守护进程管理静态路由。Windows 版是独立的 .NET 8 WPF 应用「SRM 网络助手」（源码在 `windows/`），功能与 macOS 版对齐。两个平台的免安装产物都可以直接从 [GitHub Releases](https://github.com/freeblow/mac-route-tool/releases) 下载。
 
 ```
 ✓ 10.40.85.0/24
@@ -48,7 +48,12 @@ SRM 的做法：常驻 daemon 每隔几秒比对「配置」与「内核路由�
 
 ## 安装
 
-运行 `scripts/build-app.sh` 后，打开 `dist/SRM.app`。第一次启动或服务断开时，点击面板底部的“守护进程未连接”状态，按 macOS 提示输入管理员密码。应用包内已包含 `srmd`、`srm` 和服务安装程序；修复完成后面板会刷新连接和路由状态。右键菜单也可随时重新安装或修复服务。
+**macOS**（两种方式）：
+
+1. 从 [GitHub Releases](https://github.com/freeblow/mac-route-tool/releases) 下载 `SRM-x.y.z-macos-universal.zip`（x86_64 + arm64 通用二进制），解压打开 `SRM.app`。
+2. 从源码构建：运行 `scripts/build-app.sh` 后打开 `dist/SRM.app`。
+
+第一次启动或服务断开时，应用会自动检测守护进程版本，弹出系统授权对话框完成安装/修复——应用包内已包含 `srmd`、`srm` 和服务安装程序，输一次管理员密码即可，修复完成后面板会刷新连接和路由状态。右键菜单也可随时重新安装或修复服务。
 
 也可在开发环境中通过终端安装：
 
@@ -64,7 +69,7 @@ sudo scripts/install.sh
 3. 安装 `/Library/LaunchDaemons/com.user.srmd.plist` 并 `launchctl bootstrap system`
 4. 打包 `SRM.app` 到 `~/Applications/` 并启动
 
-只运行 `scripts/build-app.sh` 会生成 GUI，但不会自动取得管理员权限；首次打开时按界面引导完成服务安装。安装完成后可用 `srm status` 检查连接。
+安装完成后可用 `srm status` 检查连接。
 
 只想装守护进程：`sudo scripts/install.sh --no-gui`。
 
@@ -105,14 +110,19 @@ srm apply                     # 强制重写
 
 ## Windows 版
 
-在 Windows 10/11 上复制整个 `windows` 文件夹，双击其中的 `SRM.cmd`。系统会弹出一次管理员授权，随后打开图形界面；无需安装 Swift、运行守护进程或手动执行维护脚本。Windows 自带的 Windows PowerShell 5.1 和 WinForms 即可运行。
+Windows 版是独立的 .NET 8 WPF 应用「SRM 网络助手」（源码在 `windows/src/`），一个窗口覆盖：静态路由（持久路由，重启保留）、网卡优先级 / 多网卡共存、网卡启停、IP 检测（子网扫描占用）。界面与功能的详细说明见 `windows/README.txt`。
 
-- 添加、编辑、启停、删除、重新同步路由；路由写入 Windows 持久路由表，重启后仍有效。
+安装方式（按省事程度排序）：
+
+1. **免安装便携版（推荐）**：从 [GitHub Releases](https://github.com/freeblow/mac-route-tool/releases) 下载 `SRM-x.y.z-windows-portable.zip`，整个文件夹解压后双击「SRM 网络助手.exe」——自带 .NET 8 运行时，目标电脑无需安装任何依赖（Windows 10 1903+ / 11，64 位）。
+2. **从源码构建**：安装 .NET 8 SDK 后双击 `windows/tools/生成便携版.cmd` 或 `生成免安装版.cmd`，生成对应产物。
+3. **旧版脚本**：PowerShell + WinForms 版（`SRM.cmd` / `SRM.ps1`）保留备用，功能基本相同。
+
+使用要点：
+
+- 路由写入 Windows 持久路由表，重启后仍有效；配置保存在 `%ProgramData%\SRM\routes.json`，应用打开期间每 21 秒自动检查补写。
 - 每条路由右侧有「测试」按钮和响应结果；主机路由检测目标，网段路由检测网关。
-- 配置保存在 `%ProgramData%\SRM\routes.json`；应用打开期间每 10 秒检查并补写缺失路由。
-- 可选填写 Windows 接口序号，可从 `route print` 查看；留空时由系统自动选择接口。
-
-Windows 版目前只支持 IPv4 网关路由。macOS 版的 `direct` 直连路由和 `en0` 等接口名称不能直接导入 Windows。此版本在 macOS 上完成代码检查，但由于当前环境没有 Windows，尚未在真实 Windows 系统上运行验收。
+- 「网卡优先级」页可调整跃点数（IPv4/IPv6 同时写入）、恢复自动跃点，多网卡共存开关也在这里。
 
 ---
 
@@ -166,7 +176,7 @@ Windows 版目前只支持 IPv4 网关路由。macOS 版的 `direct` 直连路�
 
 ```bash
 swift build -c release      # 编译（仅当前架构）
-swift test                  # 单元测试（14 个）
+swift test                  # 单元测试（66 个）
 scripts/build-app.sh        # 打包 dist/SRM.app（通用二进制 arm64 + x86_64）
 swift scripts/generate-icon.swift  # 修改图标绘制代码后重新生成图标
 make run                    # 打包并启动
