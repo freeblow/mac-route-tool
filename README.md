@@ -1,11 +1,27 @@
 # SRM · 静态路由管理器
 
-macOS 版使用菜单栏 App 和守护进程管理静态路由。Windows 版是独立的 .NET 8 WPF 应用「SRM 网络助手」（源码在 `windows/`），功能与 macOS 版对齐。两个平台的免安装产物都可以直接从 [GitHub Releases](https://github.com/freeblow/mac-route-tool/releases) 下载。
+macOS 版使用菜单栏 App 和守护进程管理静态路由。Windows 版是独立的 .NET 8 WPF 应用「SRM 网络助手」（源码在 `windows/`），功能与 macOS 版对齐。两个平台的免安装产物都可以直接从 [GitHub Releases](https://github.com/freeblow/srm/releases) 下载。
 
 ```
 ✓ 10.40.85.0/24
   via 10.40.81.254 · dev en0 · 实验楼网段
 ```
+
+---
+
+## 功能一览
+
+| 功能 | macOS | Windows |
+|---|---|---|
+| 持久静态路由，掉线/重启后自动补写 | ✓ srmd 周期对齐路由表 | ✓ 持久路由表 + 21 秒自动补写 |
+| 路由连通性测试（/32 测目标、网段测网关） | ✓ | ✓ |
+| 网卡优先级调整 | ✓ 网络服务顺序 | ✓ 跃点数（IPv4/IPv6） |
+| 网卡启用/禁用 | ✓ | ✓ |
+| IP 检测（子网扫描、占用判定、CSV 导出） | ✓ | ✓ |
+| 局域网发现（LocalSend 兼容组播、防火墙放行） | ✓ | — |
+| 多网卡共存（弱主机模式、一键共存） | — | ✓ |
+| 清理系统残留持久路由 | — | ✓ |
+| 命令行工具 | ✓ `srm` | — |
 
 ---
 
@@ -50,7 +66,7 @@ SRM 的做法：常驻 daemon 每隔几秒比对「配置」与「内核路由�
 
 **macOS**（两种方式）：
 
-1. 从 [GitHub Releases](https://github.com/freeblow/mac-route-tool/releases) 下载 `SRM-x.y.z-macos-universal.zip`（x86_64 + arm64 通用二进制），解压打开 `SRM.app`。
+1. 从 [GitHub Releases](https://github.com/freeblow/srm/releases) 下载 `SRM-x.y.z-macos-universal.zip`（x86_64 + arm64 通用二进制），解压打开 `SRM.app`。
 2. 从源码构建：运行 `scripts/build-app.sh` 后打开 `dist/SRM.app`。
 
 第一次启动或服务断开时，应用会自动检测守护进程版本，弹出系统授权对话框完成安装/修复——应用包内已包含 `srmd`、`srm` 和服务安装程序，输一次管理员密码即可，修复完成后面板会刷新连接和路由状态。右键菜单也可随时重新安装或修复服务。
@@ -112,9 +128,15 @@ srm apply                     # 强制重写
 
 Windows 版是独立的 .NET 8 WPF 应用「SRM 网络助手」（源码在 `windows/src/`），一个窗口覆盖：静态路由（持久路由，重启保留）、网卡优先级 / 多网卡共存、网卡启停、IP 检测（子网扫描占用）。界面与功能的详细说明见 `windows/README.txt`。
 
+几个 Windows 版独有的能力：
+
+- **多网卡共存**：解决「起了这块网卡、那块就不好使」——可为每块网卡设置「上网出口 / 备用出口 / 仅内网」，一键只留一块网卡负责上网、其余改仅内网，并打开弱主机模式允许跨网卡收发。
+- **清理残留路由**：把系统里不归 SRM 管的持久路由（`route -p add` 或旧脚本写入的）也列出来，确认无用后可连同注册表、NetTCPIP 持久存储一起清掉；网卡属性里填的静态网关则给出人工修改指引，不直接动。
+- **右键复制**：路由整条或只拷目标网段；网卡信息（含 IP、网关、跃点数、型号）或只拷 IPv4。
+
 安装方式（按省事程度排序）：
 
-1. **免安装便携版（推荐）**：从 [GitHub Releases](https://github.com/freeblow/mac-route-tool/releases) 下载 `SRM-x.y.z-windows-portable.zip`，整个文件夹解压后双击「SRM 网络助手.exe」——自带 .NET 8 运行时，目标电脑无需安装任何依赖（Windows 10 1903+ / 11，64 位）。
+1. **免安装便携版（推荐）**：从 [GitHub Releases](https://github.com/freeblow/srm/releases) 下载 `SRM-x.y.z-windows-portable.zip`，整个文件夹解压后双击「SRM 网络助手.exe」——自带 .NET 8 运行时，目标电脑无需安装任何依赖（Windows 10 1903+ / 11，64 位）。
 2. **从源码构建**：安装 .NET 8 SDK 后双击 `windows/tools/生成便携版.cmd` 或 `生成免安装版.cmd`，生成对应产物。
 3. **旧版脚本**：PowerShell + WinForms 版（`SRM.cmd` / `SRM.ps1`）保留备用，功能基本相同。
 
