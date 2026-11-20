@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using Microsoft.Win32;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -15,10 +16,11 @@ namespace SRM.Core;
 /// </summary>
 public static class DiscoveryFirewall
 {
-    /// <summary>SRM 自己建的放行规则名（改完还能靠它认出来）。</summary>
+    /// <summary>SRM 自己建的放行规则名（改完还能靠它认出来）。这个名字故意不跟语言变：换了名字就认不出旧规则，
+    /// 会在防火墙里留下一堆同名不同语言的历史规则。</summary>
     public const string OwnRuleName = "SRM 局域网发现（LocalSend 53317）";
 
-    private const string RuleGroupText = "SRM 网络助手";
+    private static string RuleGroupText => Loc.T("Core.Fw.RuleGroup");
     private const string FirewallRulesKey = @"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
 
     /// <summary>防火墙里一条入站规则的摘要。</summary>
@@ -37,17 +39,19 @@ public static class DiscoveryFirewall
         {
             "6" => "TCP",
             "17" => "UDP",
-            _ => Protocol.Length > 0 ? "协议 " + Protocol : "全部协议",
+            _ => Protocol.Length > 0 ? Loc.F("Core.Fw.Protocol", Protocol) : Loc.T("Core.Fw.AllProtocols"),
         };
 
-        public string ProfileText => Profiles.Count == 0 ? "全部位置" : string.Join("、", Profiles.Select(ProfileTextOf));
+        public string ProfileText => Profiles.Count == 0
+            ? Loc.T("Core.Fw.Profiles.Any")
+            : string.Join(Loc.T("Core.List.Separator"), Profiles.Select(ProfileTextOf));
 
         public static string ProfileTextOf(string profile) => profile switch
         {
-            "Domain" => "域",
-            "Private" => "专用",
-            "Public" => "公用",
-            "Any" => "全部位置",
+            "Domain" => Loc.T("Core.Fw.Profile.Domain"),
+            "Private" => Loc.T("Core.Fw.Profile.Private"),
+            "Public" => Loc.T("Core.Fw.Profile.Public"),
+            "Any" => Loc.T("Core.Fw.Profiles.Any"),
             _ => profile,
         };
     }
@@ -69,10 +73,10 @@ public static class DiscoveryFirewall
 
         public string CategoryText => Category switch
         {
-            "Private" => "专用",
-            "Public" => "公用",
-            "DomainAuthenticated" => "域",
-            _ => "未知",
+            "Private" => Loc.T("Core.Fw.Profile.Private"),
+            "Public" => Loc.T("Core.Fw.Profile.Public"),
+            "DomainAuthenticated" => Loc.T("Core.Fw.Profile.Domain"),
+            _ => Loc.T("Core.Fw.Profile.Unknown"),
         };
 
         /// <summary>这些「阻止」规则会挡住哪些网络位置（默认公用）。</summary>
@@ -90,53 +94,53 @@ public static class DiscoveryFirewall
                         if (!profiles.Contains(text)) profiles.Add(text);
                     }
                 }
-                return string.Join("、", profiles);
+                return string.Join(Loc.T("Core.List.Separator"), profiles);
             }
         }
 
         /// <summary>界面提示区用的一句话。</summary>
         public string ShortText()
         {
-            if (!Readable) return "读不到（要以管理员身份运行）";
-            if (BlockingRules.Count == 0 && PortAllowed) return "已放行，别人发来的发现包能进来";
+            if (!Readable) return Loc.T("Core.Fw.Short.Unreadable");
+            if (BlockingRules.Count == 0 && PortAllowed) return Loc.T("Core.Fw.Short.Allowed");
             if (BlockingRules.Count > 0)
             {
                 var count = BlockingRules.Count;
-                var profiles = BlockedProfilesText.Length > 0 ? BlockedProfilesText : "公用";
+                var profiles = BlockedProfilesText.Length > 0 ? BlockedProfilesText : Loc.T("Core.Fw.Profile.Public");
                 return OnPublicProfile
-                    ? $"正在拦：网络位置是「{CategoryText}」，{count} 条「阻止」规则把别人的发现包丢掉了"
-                    : $"{profiles}网络会被 {count} 条「阻止」规则丢包";
+                    ? Loc.F("Core.Fw.Short.BlockedOnProfile", CategoryText, count)
+                    : Loc.F("Core.Fw.Short.BlockedOffProfile", profiles, count);
             }
-            return "没有覆盖「公用」网络的放行规则";
+            return Loc.T("Core.Fw.Short.NoAllowRule");
         }
 
         /// <summary>详细说明（弹窗、鼠标悬停用）。</summary>
         public string Describe()
         {
-            if (!Readable) return "读不到防火墙规则：程序需要以管理员身份运行才能看到。";
+            if (!Readable) return Loc.T("Core.Fw.Describe.Unreadable");
             var lines = new List<string>();
             if (BlockingRules.Count > 0)
             {
-                lines.Add($"发现 {BlockingRules.Count} 条会挡住发现包的「阻止」入站规则：");
+                lines.Add(Loc.F("Core.Fw.Describe.BlocksHeader", BlockingRules.Count));
                 foreach (var rule in BlockingRules)
                 {
                     var who = rule.Program.Length > 0 ? rule.Program : rule.Name;
-                    lines.Add($"　· {rule.ProtocolText} · {rule.ProfileText} · {who}");
+                    lines.Add(Loc.F("Core.Fw.Describe.RuleLine", rule.ProtocolText, rule.ProfileText, who));
                 }
-                lines.Add("「阻止」优先于「放行」：只要这块网卡落在这些网络位置上，别人的发现包就会被直接丢掉。");
+                lines.Add(Loc.T("Core.Fw.Describe.BlockPriority"));
                 lines.Add(ProfileKnown
-                    ? $"当前网络位置：{CategoryText}（{(OnPublicProfile ? "正在被拦" : "暂时不受影响")}）。"
-                    : "当前网络位置读不到（需要管理员权限）。");
+                    ? Loc.F(OnPublicProfile ? "Core.Fw.Describe.CurrentBlocked" : "Core.Fw.Describe.CurrentOk", CategoryText)
+                    : Loc.T("Core.Fw.Describe.ProfileUnknown"));
             }
             else if (!PortAllowed)
             {
-                lines.Add($"没有找到覆盖全部网络位置的发现端口（{DiscoveryRoute.Port}）放行规则。");
+                lines.Add(Loc.F("Core.Fw.Describe.NoPortRule", DiscoveryRoute.Port));
             }
             else
             {
-                lines.Add($"入站已放行：发现端口 {DiscoveryRoute.Port} 在专用 / 公用网络都能进来。");
+                lines.Add(Loc.F("Core.Fw.Describe.PortAllowed", DiscoveryRoute.Port));
             }
-            if (OwnRuleReady) lines.Add($"SRM 建的放行规则「{OwnRuleName}」已经在了。");
+            if (OwnRuleReady) lines.Add(Loc.F("Core.Fw.Describe.OwnRule", OwnRuleName));
             return string.Join(Environment.NewLine, lines);
         }
     }
@@ -216,17 +220,17 @@ public static class DiscoveryFirewall
     /// </summary>
     public static List<string> Repair(int interfaceIndex)
     {
-        if (!NetworkApi.IsElevated) throw new InvalidOperationException("需要管理员权限才能修改防火墙规则。");
+        if (!NetworkApi.IsElevated) throw new InvalidOperationException(Loc.T("Core.Fw.NeedsAdmin"));
         var (code, output) = RunCaptured("powershell.exe", new[]
         {
             "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", RepairScript(interfaceIndex),
         });
-        OperationLog.Write($"修防火墙（网卡 #{interfaceIndex}）→ 退出码 {code}；输出：{(output.Length > 0 ? output : "（空）")}");
+        OperationLog.Write(Loc.F("Core.Fw.RepairLog", interfaceIndex, code, output.Length > 0 ? output : Loc.T("Core.Empty")));
         var steps = DescribeReport(output);
         if (code != 0 && steps.Count == 0)
         {
             var text = output.Trim();
-            throw new InvalidOperationException(text.Length > 0 ? text : "修改防火墙失败。");
+            throw new InvalidOperationException(text.Length > 0 ? text : Loc.T("Core.Fw.RepairFailed"));
         }
         return steps;
     }
@@ -387,27 +391,27 @@ public static class DiscoveryFirewall
             switch (head)
             {
                 case "profile" when kind == "set":
-                    steps.Add($"网络位置：{RuleInfo.ProfileTextOf(value)} → 专用");
+                    steps.Add(Loc.F("Core.Fw.Step.ProfileSet", RuleInfo.ProfileTextOf(value)));
                     break;
                 case "profile" when kind == "keep":
-                    steps.Add("网络位置：本来就是「专用」，没有动");
+                    steps.Add(Loc.T("Core.Fw.Step.ProfileKept"));
                     break;
                 case "profile":
-                    steps.Add($"网络位置：没能改成「专用」（{value}）");
+                    steps.Add(Loc.F("Core.Fw.Step.ProfileFailed", value));
                     break;
                 case "blocks" when kind == "disabled":
                     var count = value.Length > 0 ? value : "0";
-                    var names = extra.Length > 0 ? $"（{extra}）" : string.Empty;
-                    steps.Add($"已停用挡住发现包的「阻止」规则 {count} 条{names}");
+                    var names = extra.Length > 0 ? Loc.F("Core.Fw.Step.BlocksNames", extra) : string.Empty;
+                    steps.Add(Loc.F("Core.Fw.Step.BlocksDisabled", count, names));
                     break;
                 case "blocks":
-                    steps.Add($"「阻止」规则：没能改动（{value}）");
+                    steps.Add(Loc.F("Core.Fw.Step.BlocksFailed", value));
                     break;
                 case "allow" when kind == "ok":
-                    steps.Add($"已放行入站：发现端口 {DiscoveryRoute.Port}（TCP + UDP，专用 / 公用都放行）");
+                    steps.Add(Loc.F("Core.Fw.Step.AllowAdded", DiscoveryRoute.Port));
                     break;
                 case "allow":
-                    steps.Add($"放行规则：没能加上（{value}）");
+                    steps.Add(Loc.F("Core.Fw.Step.AllowFailed", value));
                     break;
                 default:
                     steps.Add(line);

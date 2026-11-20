@@ -54,9 +54,9 @@ public static class NicCoexist
             var ignoreChanged = ignore != nic.IgnoresDefaultRoutes;
             if (!ignoreChanged && !weakHost) continue;
             var parts = new List<string>();
-            if (ignoreChanged) parts.Add(ignore ? "改为仅内网（不抢上网出口）" : "恢复为上网出口");
-            if (weakHost) parts.Add("开启跨网卡收发");
-            steps.Add(new CoexistStep(nic.Index, nic.Name, ignore, weakHost, string.Join("，", parts)));
+            if (ignoreChanged) parts.Add(Localization.Loc.T(ignore ? "Core.Coexist.Step.ToInternal" : "Core.Coexist.Step.ToExit"));
+            if (weakHost) parts.Add(Localization.Loc.T("Core.Coexist.Step.WeakHost"));
+            steps.Add(new CoexistStep(nic.Index, nic.Name, ignore, weakHost, string.Join(Localization.Loc.T("Core.Coexist.SummarySeparator"), parts)));
         }
         return steps;
     }

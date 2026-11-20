@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using SRM.Core.Native;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -24,7 +25,7 @@ public static class RouteTable
     public static List<RouteRow> Query()
     {
         var result = IpHlpApi.GetIpForwardTable2(IpHlpApi.AfInet, out var table);
-        if (result != 0) throw new InvalidOperationException($"读取路由表失败（错误码 {result}）。");
+        if (result != 0) throw new InvalidOperationException(Loc.F("Core.RouteTable.ReadFailed", result));
         try
         {
             var count = (uint)Marshal.ReadInt32(table);

@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Markup;
 using SRM.Core;
+using SRM.Core.Localization;
 
 namespace SRM.App.Dialogs;
 
@@ -19,12 +21,13 @@ public partial class RouteEditorWindow : Window
     public RouteEditorWindow(RouteEntry? existing, IReadOnlyList<NicInfo> nics)
     {
         InitializeComponent();
+        Language = XmlLanguage.GetLanguage(Loc.Culture.IetfLanguageTag);
         _existing = existing;
-        HeaderTitle.Text = existing is null ? "添加静态路由" : "编辑静态路由";
+        HeaderTitle.Text = Loc.T(existing is null ? "Ui.Editor.AddTitle" : "Ui.Editor.EditTitle");
 
         var options = new List<InterfaceOption>
         {
-            new() { Index = null, Text = "自动（按网关自动选择网卡）" },
+            new() { Index = null, Text = Loc.T("Ui.Editor.InterfaceAuto") },
         };
         foreach (var nic in nics.Where(item => item.Index > 1))
         {
@@ -67,7 +70,7 @@ public partial class RouteEditorWindow : Window
         }
         if (!Ipv4.TryParse(GatewayBox.Text, out var gateway))
         {
-            ShowError("网关地址不正确，应形如 10.40.81.254。");
+            ShowError(Loc.T("Ui.Editor.BadGateway"));
             GatewayBox.Focus();
             return;
         }

@@ -1,4 +1,5 @@
 using System.Windows;
+using SRM.Core.Localization;
 
 namespace SRM.App.Dialogs;
 
@@ -13,6 +14,6 @@ public static class AppDialog
     public static void Error(Window? owner, string title, string message, string detail = "") =>
         MessageDialog.Error(owner, title, message, detail);
 
-    public static bool Confirm(Window? owner, string title, string message, string detail = "", string confirmText = "确定", bool danger = false) =>
-        MessageDialog.Confirm(owner, title, message, detail, confirmText, danger);
+    public static bool Confirm(Window? owner, string title, string message, string detail = "", string? confirmText = null, bool danger = false) =>
+        MessageDialog.Confirm(owner, title, message, detail, confirmText ?? Loc.T("Ui.Dialog.Confirm"), danger);
 }

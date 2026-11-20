@@ -3,6 +3,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using SRM.Core.Native;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -72,7 +73,7 @@ public static class SubnetScan
         var value = (text ?? string.Empty).Trim().Replace('–', '-').Replace('－', '-').Replace('—', '-');
         if (value.Length == 0)
         {
-            error = "请填写要检测的网段或地址，例如 192.168.15.0/24、192.168.15.66、192.168.15.1-200。";
+            error = Loc.T("Core.Scan.Empty");
             return false;
         }
 
@@ -89,14 +90,14 @@ public static class SubnetScan
             var right = value[(dash + 1)..].Trim();
             if (!Ipv4.TryParse(left, out first))
             {
-                error = "区间起点不是合法的 IPv4 地址，例如 192.168.15.1-200。";
+                error = Loc.T("Core.Scan.RangeStart");
                 return false;
             }
             if (right.Contains('.'))
             {
                 if (!Ipv4.TryParse(right, out last))
                 {
-                    error = "区间终点不是合法的 IPv4 地址。";
+                    error = Loc.T("Core.Scan.RangeEnd");
                     return false;
                 }
             }
@@ -104,7 +105,7 @@ public static class SubnetScan
             {
                 if (!byte.TryParse(right, out var tail))
                 {
-                    error = "区间写法应是 192.168.15.1-192.168.15.200 或 192.168.15.1-200。";
+                    error = Loc.T("Core.Scan.RangeSyntax");
                     return false;
                 }
                 last = (first & 0xFFFFFF00) | tail;
@@ -115,13 +116,13 @@ public static class SubnetScan
         {
             if (!Ipv4.TryParseSubnet(value, out network, out var mask))
             {
-                error = "网段写法应是 192.168.15.0/24（掩码 0-32）。";
+                error = Loc.T("Core.Scan.SubnetSyntax");
                 return false;
             }
             prefix = Ipv4.PrefixFromMask(mask);
             if (prefix > 30)
             {
-                error = "/31、/32 里没有可分配的地址，直接填单个地址（例如 192.168.15.66）就行。";
+                error = Loc.T("Core.Scan.TooNarrow");
                 return false;
             }
             first = network + 1;
@@ -132,7 +133,7 @@ public static class SubnetScan
         {
             if (!Ipv4.TryParse(value, out first))
             {
-                error = "地址写法应是 192.168.15.66 或 192.168.15.0/24。";
+                error = Loc.T("Core.Scan.AddressSyntax");
                 return false;
             }
             last = first;
@@ -141,7 +142,7 @@ public static class SubnetScan
         var count = (int)(last - first + 1);
         if (count > MaxAddresses)
         {
-            error = $"一次最多检测 {MaxAddresses} 个地址，这个范围太大了，请把网段收小一点。";
+            error = Loc.F("Core.Scan.TooLarge", MaxAddresses);
             return false;
         }
 
@@ -219,16 +220,16 @@ public static class SubnetScan
                 {
                     Address = address,
                     State = SubnetHostState.Self,
-                    Note = plan.InterfaceName.Length > 0 ? $"本机（{plan.InterfaceName}）" : "本机",
+                    Note = plan.InterfaceName.Length > 0 ? Loc.F("Core.Scan.Note.Self", plan.InterfaceName) : Loc.T("Core.Scan.Note.SelfPlain"),
                 };
             }
             else if (plan.Prefix > 0 && address == plan.NetworkAddress)
             {
-                results[index] = new SubnetHost { Address = address, State = SubnetHostState.Reserved, Note = "网络地址，不能分给设备。" };
+                results[index] = new SubnetHost { Address = address, State = SubnetHostState.Reserved, Note = Loc.T("Core.Scan.Note.NetworkAddress") };
             }
             else if (plan.Prefix > 0 && address == plan.BroadcastAddress)
             {
-                results[index] = new SubnetHost { Address = address, State = SubnetHostState.Reserved, Note = "广播地址，不能分给设备。" };
+                results[index] = new SubnetHost { Address = address, State = SubnetHostState.Reserved, Note = Loc.T("Core.Scan.Note.Broadcast") };
             }
             else
             {
@@ -283,7 +284,7 @@ public static class SubnetScan
                     State = SubnetHostState.Gateway,
                     Mac = mac,
                     RttMs = hasRtt ? rtt : null,
-                    Note = hasRtt ? "网关" : "网关（不响应 Ping）",
+                    Note = Loc.T(hasRtt ? "Core.Scan.Note.Gateway" : "Core.Scan.Note.GatewayNoPing"),
                 });
                 continue;
             }
@@ -295,9 +296,9 @@ public static class SubnetScan
                     State = SubnetHostState.Occupied,
                     Mac = mac,
                     RttMs = hasRtt ? rtt : null,
-                    Note = mac.Length > 0
-                        ? hasRtt ? "已被占用" : "已被占用（不响应 Ping，可能是防火墙）"
-                        : "已被占用（这个网段不在本机网卡上，只能按 Ping 判断）",
+                    Note = Loc.T(mac.Length > 0
+                        ? hasRtt ? "Core.Scan.Note.Occupied" : "Core.Scan.Note.OccupiedNoPing"
+                        : "Core.Scan.Note.OccupiedOffLink"),
                 });
                 continue;
             }
@@ -305,13 +306,28 @@ public static class SubnetScan
             {
                 Address = address,
                 State = plan.OnLink ? SubnetHostState.Free : SubnetHostState.Unknown,
-                Note = plan.OnLink ? "空闲，没人在用。" : "不在本机网段，Ping 不通，无法确定。",
+                Note = Loc.T(plan.OnLink ? "Core.Scan.Note.Free" : "Core.Scan.Note.Unknown"),
             });
         }
         return list;
     }
 
     /// <summary>同网段探测：先往这些地址发个 UDP，逼系统自己发 ARP 请求，然后读 ARP 表；两轮还没出现的就是空闲。</summary>
+    public static string Describe(SubnetScanPlan plan, SubnetHost host) => host.State switch
+    {
+        SubnetHostState.Self => plan.InterfaceName.Length > 0
+            ? Loc.F("Core.Scan.Note.Self", plan.InterfaceName)
+            : Loc.T("Core.Scan.Note.SelfPlain"),
+        SubnetHostState.Reserved => Loc.T(host.Address == plan.BroadcastAddress
+            ? "Core.Scan.Note.Broadcast"
+            : "Core.Scan.Note.NetworkAddress"),
+        SubnetHostState.Gateway => Loc.T(host.RttMs is null ? "Core.Scan.Note.GatewayNoPing" : "Core.Scan.Note.Gateway"),
+        SubnetHostState.Occupied => Loc.T(host.Mac.Length == 0
+            ? "Core.Scan.Note.OccupiedOffLink"
+            : host.RttMs is null ? "Core.Scan.Note.OccupiedNoPing" : "Core.Scan.Note.Occupied"),
+        _ => Loc.T(plan.OnLink ? "Core.Scan.Note.Free" : "Core.Scan.Note.Unknown"),
+    };
+
     private static async Task<Dictionary<uint, string>> ProbeArpAsync(SubnetScanPlan plan, List<uint> targets,
         IProgress<int>? progress, int baseCount, CancellationToken token)
     {

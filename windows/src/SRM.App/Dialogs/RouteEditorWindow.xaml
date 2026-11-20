@@ -1,7 +1,7 @@
 <Window x:Class="SRM.App.Dialogs.RouteEditorWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="静态路由" Width="560" SizeToContent="Height"
+        Title="{DynamicResource Ui.Editor.WindowTitle}" Width="560" SizeToContent="Height"
         WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
         FontFamily="{StaticResource AppFont}" FontSize="13"
@@ -24,8 +24,8 @@
             </Grid.RowDefinitions>
 
             <StackPanel Grid.Row="0">
-                <TextBlock x:Name="HeaderTitle" Text="添加静态路由" FontSize="15" FontWeight="SemiBold" />
-                <TextBlock Text="填写目标网段和网关即可；不确定出口网卡时保持“自动”。"
+                <TextBlock x:Name="HeaderTitle" Text="{DynamicResource Ui.Editor.AddTitle}" FontSize="15" FontWeight="SemiBold" />
+                <TextBlock Text="{DynamicResource Ui.Editor.Subtitle}"
                            Style="{StaticResource HintText}" Margin="0,6,0,0" />
             </StackPanel>
 
@@ -42,31 +42,31 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="目标网段" Style="{StaticResource FieldLabel}" />
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="{DynamicResource Ui.Editor.Destination}" Style="{StaticResource FieldLabel}" />
                 <TextBox Grid.Row="0" Grid.Column="1" x:Name="DestinationBox" Style="{StaticResource AppTextBox}" />
                 <TextBlock Grid.Row="1" Grid.Column="1" Margin="0,6,0,0"
-                           Text="例如 10.40.85.0/24（整个网段）、10.40.85.7（单台主机）或 default（默认路由）"
+                           Text="{DynamicResource Ui.Editor.DestinationHint}"
                            Style="{StaticResource HintText}" />
 
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="网关" Style="{StaticResource FieldLabel}" Margin="0,14,10,0" />
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="{DynamicResource Ui.Editor.Gateway}" Style="{StaticResource FieldLabel}" Margin="0,14,10,0" />
                 <TextBox Grid.Row="2" Grid.Column="1" x:Name="GatewayBox" Style="{StaticResource AppTextBox}" Margin="0,14,0,0" />
 
-                <TextBlock Grid.Row="3" Grid.Column="0" Text="出口网卡" Style="{StaticResource FieldLabel}" Margin="0,12,10,0" />
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="{DynamicResource Ui.Editor.Interface}" Style="{StaticResource FieldLabel}" Margin="0,12,10,0" />
                 <ComboBox Grid.Row="3" Grid.Column="1" x:Name="InterfaceBox" Style="{StaticResource AppComboBox}" Margin="0,12,0,0" />
 
-                <TextBlock Grid.Row="4" Grid.Column="0" Text="备注" Style="{StaticResource FieldLabel}" Margin="0,12,10,0" />
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="{DynamicResource Ui.Editor.Note}" Style="{StaticResource FieldLabel}" Margin="0,12,10,0" />
                 <TextBox Grid.Row="4" Grid.Column="1" x:Name="NoteBox" Style="{StaticResource AppTextBox}" Margin="0,12,0,0" />
             </Grid>
 
             <CheckBox Grid.Row="2" x:Name="EnabledBox" Style="{StaticResource AppCheckBox}"
-                      Content="保存后立刻写入系统路由表（重启后仍然有效）" IsChecked="True" Margin="0,16,0,0" />
+                      Content="{DynamicResource Ui.Editor.Enabled}" IsChecked="True" Margin="0,16,0,0" />
 
             <TextBlock Grid.Row="3" x:Name="ErrorText" Margin="0,12,0,0" Foreground="{StaticResource DangerBrush}"
                        TextWrapping="Wrap" Visibility="Collapsed" />
 
             <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
-                <Button x:Name="CancelButton" Style="{StaticResource AppButton}" Content="取消" MinWidth="88" Click="Cancel_Click" />
-                <Button x:Name="SaveButton" Style="{StaticResource PrimaryButton}" Content="保存" MinWidth="88" Margin="10,0,0,0"
+                <Button x:Name="CancelButton" Style="{StaticResource AppButton}" Content="{DynamicResource Ui.Dialog.Cancel}" MinWidth="88" Click="Cancel_Click" />
+                <Button x:Name="SaveButton" Style="{StaticResource PrimaryButton}" Content="{DynamicResource Ui.Save}" MinWidth="88" Margin="10,0,0,0"
                         IsDefault="True" Click="Save_Click" />
             </StackPanel>
         </Grid>

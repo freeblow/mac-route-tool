@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 using SRM.Core.Native;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -50,7 +51,7 @@ public static class DeviceManager
     {
         var classGuid = SetupApi.NetworkClassGuid;
         var deviceInfoSet = SetupApi.SetupDiGetClassDevs(ref classGuid, IntPtr.Zero, IntPtr.Zero, SetupApi.DigcfPresent);
-        if (deviceInfoSet == new IntPtr(-1)) throw new InvalidOperationException("无法打开设备列表。");
+        if (deviceInfoSet == new IntPtr(-1)) throw new InvalidOperationException(Loc.T("Core.Device.ListOpenFailed"));
         try
         {
             var deviceInfo = new SetupApi.SpDevInfoData { cbSize = (uint)Marshal.SizeOf<SetupApi.SpDevInfoData>() };
@@ -69,7 +70,7 @@ public static class DeviceManager
                 ok = true;
                 break;
             }
-            if (!ok) throw new InvalidOperationException("未找到该网卡设备，可能已被移除。");
+            if (!ok) throw new InvalidOperationException(Loc.T("Core.Device.NotFound"));
         }
         finally
         {
@@ -104,7 +105,7 @@ public static class DeviceManager
                     var handle = SetupApi.SetupDiOpenDevRegKey(deviceInfoSet, ref deviceInfo, SetupApi.DicsFlagGlobal, 0, keyType, SetupApi.KeyRead);
                     if (handle == new IntPtr(-1) || handle == IntPtr.Zero)
                     {
-                        lines.Add($"{label}: 打不开");
+                        lines.Add(Loc.F("Core.Device.RegistryLocked", label));
                         continue;
                     }
                     using var safeHandle = new SafeRegistryHandle(handle, true);
@@ -211,10 +212,10 @@ public static class DeviceManager
 
     private static string DescribeChangeError(bool enabling, uint result) => result switch
     {
-        0 when enabling => "启用失败：系统拒绝了该操作（驱动或固件不支持）。",
-        0 => "禁用失败：系统拒绝了该操作（驱动或固件不支持）。",
-        5 when enabling => "启用失败：需要管理员权限。",
-        5 => "禁用失败：需要管理员权限。",
-        _ => enabling ? $"启用失败（错误码 {result}）。" : $"禁用失败（错误码 {result}）。",
+        0 when enabling => Loc.T("Core.Device.EnableRejected"),
+        0 => Loc.T("Core.Device.DisableRejected"),
+        5 when enabling => Loc.T("Core.Device.EnableNeedsAdmin"),
+        5 => Loc.T("Core.Device.DisableNeedsAdmin"),
+        _ => enabling ? Loc.F("Core.Device.EnableFailed", result) : Loc.F("Core.Device.DisableFailed", result),
     };
 }

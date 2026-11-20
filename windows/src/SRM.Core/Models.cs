@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -92,7 +93,7 @@ public sealed class NicInfo
         }
     }
 
-    public string MetricText => Metric is null ? "—" : AutomaticMetric == true ? $"{Metric} · 自动" : $"{Metric} · 手动";
+    public string MetricText => Metric is null ? "—" : Loc.F(AutomaticMetric == true ? "Core.Nic.MetricAuto" : "Core.Nic.MetricManual", Metric);
     public bool CanChangePriority => Metric is not null;
 }
 

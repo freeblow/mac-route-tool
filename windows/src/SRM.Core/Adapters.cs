@@ -1,6 +1,7 @@
 using System.Net;
 using System.Runtime.InteropServices;
 using SRM.Core.Native;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -33,7 +34,7 @@ public static class Adapters
                 buffer = Marshal.AllocHGlobal((int)size);
                 result = IpHlpApi.GetAdaptersAddresses(IpHlpApi.AfInet, flags, IntPtr.Zero, buffer, ref size);
             }
-            if (result != 0) throw new InvalidOperationException($"读取网卡失败（错误码 {result}）。");
+            if (result != 0) throw new InvalidOperationException(Loc.F("Core.Adapters.ReadFailed", result));
 
             var list = new List<AdapterRecord>();
             var pointer = buffer;

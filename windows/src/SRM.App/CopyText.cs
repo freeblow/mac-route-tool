@@ -1,4 +1,5 @@
 using SRM.Core;
+using SRM.Core.Localization;
 
 namespace SRM.App;
 
@@ -10,7 +11,8 @@ public static class CopyText
 {
     public const char Separator = '\t';
 
-    public static string SubnetHeader => Row("地址", "状态", "MAC 地址", "响应", "说明");
+    public static string SubnetHeader => Row(
+        Loc.T("Ui.Scan.ColAddress"), Loc.T("Ui.Col.Status"), Loc.T("Ui.Scan.ColMac"), Loc.T("Ui.Scan.ColRtt"), Loc.T("Ui.Col.Detail"));
 
     /// <summary>「IP 检测」里的一行：地址、状态、MAC、响应、说明。</summary>
     public static string SubnetRow(SubnetHost host) => Row(
@@ -22,7 +24,9 @@ public static class CopyText
 
     public static string SubnetTable(IEnumerable<SubnetHost> hosts) => Table(SubnetHeader, hosts.Select(SubnetRow));
 
-    public static string NicHeader => Row("优先级", "网卡", "序号", "状态", "类型", "速率", "IPv4 地址", "默认网关", "上网出口", "跃点数", "共存", "型号");
+    public static string NicHeader => Row(
+        Loc.T("Ui.Col.Priority"), Loc.T("Ui.Col.Nic"), Loc.T("Ui.Col.Index"), Loc.T("Ui.Col.Status"), Loc.T("Ui.Col.Kind"), Loc.T("Ui.Col.Speed"),
+        Loc.T("Ui.Col.Address"), Loc.T("Ui.Col.DefaultGateway"), Loc.T("Ui.Col.Exit"), Loc.T("Ui.Col.Metric"), Loc.T("Ui.Col.Coexist"), Loc.T("Ui.Col.Model"));
 
     /// <summary>「网卡优先级」里的一行。</summary>
     public static string NicRow(NicRowVm row) => Row(
@@ -39,7 +43,8 @@ public static class CopyText
         row.WeakHostText,
         row.DescriptionText);
 
-    public static string RouteHeader => Row("状态", "目标网段", "网关", "出口接口", "备注", "连通性");
+    public static string RouteHeader => Row(
+        Loc.T("Ui.Col.Status"), Loc.T("Ui.Col.Destination"), Loc.T("Ui.Col.Gateway"), Loc.T("Ui.Col.Interface"), Loc.T("Ui.Col.Note"), Loc.T("Ui.Col.Connectivity"));
 
     /// <summary>「静态路由」里的一行。</summary>
     public static string RouteRow(RouteRowVm row) => Row(
@@ -50,7 +55,8 @@ public static class CopyText
         row.NoteText,
         row.TestText.Length > 0 ? row.TestText : "—");
 
-    public static string SystemRouteHeader => Row("目标网段", "网关", "来源", "说明");
+    public static string SystemRouteHeader => Row(
+        Loc.T("Ui.Col.Destination"), Loc.T("Ui.Col.Gateway"), Loc.T("Ui.Col.Source"), Loc.T("Ui.Col.Detail"));
 
     /// <summary>「系统里其它路由」里的一行。</summary>
     public static string SystemRouteRow(SystemRouteRowVm row) => Row(

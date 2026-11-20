@@ -202,6 +202,33 @@
             </Setter.Value>
         </Setter>
     </Style>
+    <!-- 语言切换：比标签页更小的一对按钮 -->
+    <Style x:Key="LangTab" TargetType="RadioButton" BasedOn="{StaticResource NavTab}">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="Bd" CornerRadius="6" Padding="11,4" Background="Transparent" SnapsToDevicePixels="True">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CardBrush}" />
+                            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsMouseOver" Value="True" />
+                                <Condition Property="IsChecked" Value="False" />
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="Bd" Property="Background" Value="#DDE0E5" />
+                        </MultiTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
     <!-- ============ 输入控件 ============ -->
     <Style x:Key="AppTextBox" TargetType="TextBox">
         <Setter Property="FontFamily" Value="{StaticResource AppFont}" />

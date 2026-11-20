@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Media;
 using SRM.Core;
+using SRM.Core.Localization;
 
 namespace SRM.App;
 
@@ -46,12 +47,12 @@ public abstract class Observable : INotifyPropertyChanged
 
 public sealed class RouteRowVm : Observable
 {
-    private string _stateText = "待同步";
+    private string _stateText = Loc.T("Ui.Route.State.Pending");
     private string _stateDetail = string.Empty;
     private Brush _stateBrush = Palette.Neutral;
     private Brush _stateBackground = Palette.NeutralSoft;
     private string _testText = string.Empty;
-    private string _interfaceText = "自动";
+    private string _interfaceText = Loc.T("Ui.Route.InterfaceAuto");
 
     public RouteRowVm(RouteEntry entry) => Entry = entry;
 
@@ -105,22 +106,22 @@ public sealed class RouteRowVm : Observable
         switch (status.State)
         {
             case RouteState.Active:
-                StateText = "已生效";
+                StateText = Loc.T("Ui.Route.State.Active");
                 StateBrush = Palette.Success;
                 StateBackground = Palette.SuccessSoft;
                 break;
             case RouteState.Disabled:
-                StateText = "已停用";
+                StateText = Loc.T("Ui.Route.State.Disabled");
                 StateBrush = Palette.Neutral;
                 StateBackground = Palette.NeutralSoft;
                 break;
             case RouteState.Failed:
-                StateText = "写入失败";
+                StateText = Loc.T("Ui.Route.State.Failed");
                 StateBrush = Palette.Danger;
                 StateBackground = Palette.DangerSoft;
                 break;
             default:
-                StateText = "待写入";
+                StateText = Loc.T("Ui.Route.State.Waiting");
                 StateBrush = Palette.Warning;
                 StateBackground = Palette.WarningSoft;
                 break;
@@ -198,12 +199,12 @@ public sealed class ScanRowVm : Observable
 
     public static string StateTextOf(SubnetHostState state) => state switch
     {
-        SubnetHostState.Reserved => "保留地址",
-        SubnetHostState.Self => "本机",
-        SubnetHostState.Gateway => "网关",
-        SubnetHostState.Occupied => "已被占用",
-        SubnetHostState.Free => "空闲可用",
-        _ => "查不到",
+        SubnetHostState.Reserved => Loc.T("Ui.Scan.State.Reserved"),
+        SubnetHostState.Self => Loc.T("Ui.Scan.State.Self"),
+        SubnetHostState.Gateway => Loc.T("Ui.Scan.State.Gateway"),
+        SubnetHostState.Occupied => Loc.T("Ui.Scan.State.Occupied"),
+        SubnetHostState.Free => Loc.T("Ui.Scan.State.Free"),
+        _ => Loc.T("Ui.Scan.State.Unknown"),
     };
 }
 
@@ -245,7 +246,7 @@ public sealed class NicRowVm : Observable
     public string NameText => _nic.Name;
     public string IndexText => _nic.Index > 0 ? _nic.Index.ToString() : "—";
     public string StatusText => _nic.Status;
-    public string KindText => _nic.IsVirtual ? "虚拟" : "物理";
+    public string KindText => Loc.T(_nic.IsVirtual ? "Ui.Nic.Kind.Virtual" : "Ui.Nic.Kind.Physical");
     public string SpeedText => _nic.SpeedText.Length > 0 ? _nic.SpeedText : "—";
     public string AddressText => _nic.Address.Length > 0 ? _nic.Address : "—";
     public string GatewayText
@@ -280,9 +281,9 @@ public sealed class NicRowVm : Observable
 
     public string ExitText => _exitRole switch
     {
-        NicExitRole.Exit => "上网出口",
-        NicExitRole.Backup => "备用出口",
-        NicExitRole.Internal => "仅内网",
+        NicExitRole.Exit => Loc.T("Ui.Nic.Exit.Exit"),
+        NicExitRole.Backup => Loc.T("Ui.Nic.Exit.Backup"),
+        NicExitRole.Internal => Loc.T("Ui.Nic.Exit.Internal"),
         _ => "—",
     };
 
@@ -294,25 +295,21 @@ public sealed class NicRowVm : Observable
         : _exitRole == NicExitRole.Backup ? Palette.WarningSoft
         : Palette.NeutralSoft;
 
-    public string WeakHostText => WeakHostOn ? "已开启" : _nic.WeakHostSend || _nic.WeakHostReceive ? "部分" : "未开启";
+    public string WeakHostText => Loc.T(WeakHostOn ? "Ui.Nic.WeakHost.On"
+        : _nic.WeakHostSend || _nic.WeakHostReceive ? "Ui.Nic.WeakHost.Partial"
+        : "Ui.Nic.WeakHost.Off");
     public Brush WeakHostBrush => WeakHostOn ? Palette.Accent : Palette.Neutral;
     public Brush WeakHostBackground => WeakHostOn ? Palette.AccentSoft : Palette.NeutralSoft;
 
-    public Brush StatusBrush => _nic.Status switch
-    {
-        "已连接" => Palette.Success,
-        "已禁用" => Palette.Danger,
-        "未就绪" => Palette.Warning,
-        _ => Palette.Neutral,
-    };
+    public Brush StatusBrush => _nic.Status == Loc.T("Core.Nic.State.Up") ? Palette.Success
+        : _nic.Status == Loc.T("Core.Nic.State.Disabled") ? Palette.Danger
+        : _nic.Status == Loc.T("Core.Nic.State.NotReady") ? Palette.Warning
+        : Palette.Neutral;
 
-    public Brush StatusBackground => _nic.Status switch
-    {
-        "已连接" => Palette.SuccessSoft,
-        "已禁用" => Palette.DangerSoft,
-        "未就绪" => Palette.WarningSoft,
-        _ => Palette.NeutralSoft,
-    };
+    public Brush StatusBackground => _nic.Status == Loc.T("Core.Nic.State.Up") ? Palette.SuccessSoft
+        : _nic.Status == Loc.T("Core.Nic.State.Disabled") ? Palette.DangerSoft
+        : _nic.Status == Loc.T("Core.Nic.State.NotReady") ? Palette.WarningSoft
+        : Palette.NeutralSoft;
 
     public void Apply(NicInfo nic)
     {

@@ -7,6 +7,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using SRM.App.Dialogs;
 using SRM.Core;
+using SRM.Core.Localization;
 
 namespace SRM.UiSmoke;
 
@@ -91,6 +92,34 @@ internal static class Program
         Console.WriteLine(CopyFailures.Count == 0
             ? "  [复制·自检] 全部通过：右键菜单的复制真的把内容写进了剪贴板"
             : $"  [复制·自检] 失败 {CopyFailures.Count} 项：{string.Join("、", CopyFailures)}");
+
+        // 切成英文再渲染一遍：顺带验证「切语言 → 界面上的文案（含列头、右键菜单）跟着换」这条路径
+        Loc.SetLanguage(Loc.English, persist: false);
+        var enWindow = new Window
+        {
+            Width = Width,
+            Height = Height,
+            Left = -4000,
+            Top = -4000,
+            ShowInTaskbar = false,
+            Content = host,
+        };
+        enWindow.Show();
+        Pump(2500);
+        SetTab(window, "TabRoutes");
+        Settle(host);
+        Render(host, Path.Combine(outputDir, "routes-en.png"));
+        SetTab(window, "TabNics");
+        Settle(host);
+        Render(host, Path.Combine(outputDir, "nics-en.png"));
+        SetTab(window, "TabScan");
+        Settle(host);
+        Render(host, Path.Combine(outputDir, "scan-en.png"));
+        RenderWindow(new RouteEditorWindow(entry, SampleNics()), Path.Combine(outputDir, "editor-en.png"));
+        RenderWindow(CreateConfirmDialog(), Path.Combine(outputDir, "confirm-en.png"));
+        Console.WriteLine($"  [预览·英文] 标题={window.Title}｜网卡页标签={(Field(window, "TabNics") as RadioButton)?.Content}｜添加按钮={(Field(window, "AddRouteButton") as Button)?.Content}");
+        Console.WriteLine($"  [预览·英文] 检测摘要={ScanSummary(window)}");
+        enWindow.Close();
         Console.WriteLine($"已生成预览：{outputDir}");
         return CopyFailures.Count == 0 ? 0 : 1;
     }

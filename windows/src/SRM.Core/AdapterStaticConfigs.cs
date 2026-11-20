@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -31,7 +32,7 @@ public static class AdapterStaticConfigs
             {
                 if (device.Guid.Length == 0 || names.ContainsKey(device.Guid)) continue;
                 var name = device.ConnectionName.Length > 0 ? device.ConnectionName : device.Description;
-                names[device.Guid] = device.IsDisabled ? name + "，已禁用" : name;
+                names[device.Guid] = device.IsDisabled ? Loc.F("Core.Adapter.DisabledName", name) : name;
             }
         }
         catch

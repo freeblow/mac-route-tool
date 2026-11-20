@@ -83,7 +83,7 @@ public static class DiscoveryBoost
         var change = new MetricChange(interfaceIndex, current.Value.Metric, current.Value.Automatic);
         if (current.Value.Metric <= target) return change;
         NetworkApi.SetNicMetric(interfaceIndex, target);
-        OperationLog.Write($"为了抢组播出口：把网卡 #{interfaceIndex} 的跃点数从 {current.Value.Metric} 改成 {target}");
+        OperationLog.Write(Localization.Loc.F("Core.Boost.LowerLog", interfaceIndex, current.Value.Metric, target));
         return change;
     }
 
@@ -94,10 +94,10 @@ public static class DiscoveryBoost
         if (change.WasAutomatic)
         {
             NetworkApi.ResetNicMetric(change.Index);
-            OperationLog.Write($"还原网卡 #{change.Index} 的跃点数为自动获取");
+            OperationLog.Write(Localization.Loc.F("Core.Boost.RestoreAutoLog", change.Index));
             return;
         }
         NetworkApi.SetNicMetric(change.Index, original);
-        OperationLog.Write($"还原网卡 #{change.Index} 的跃点数为 {original}");
+        OperationLog.Write(Localization.Loc.F("Core.Boost.RestoreLog", change.Index, original));
     }
 }

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Principal;
 using SRM.Core.Native;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -55,7 +56,7 @@ public static class NetworkApi
                 Index = adapter.Index,
                 Name = adapter.Name,
                 Description = device?.Description.Length > 0 ? device.Description : adapter.Description,
-                Status = adapter.IsUp ? "已连接" : "已断开",
+                Status = adapter.IsUp ? Loc.T("Core.Nic.State.Up") : Loc.T("Core.Nic.State.Down"),
                 IsUp = adapter.IsUp,
                 IsDisabled = false,
                 IsVirtual = device?.IsVirtual ?? false,
@@ -81,7 +82,9 @@ public static class NetworkApi
             if (device.IsHidden || device.Index == 1) continue;
             var fallbackMetric = device.Index > 1 ? TryGetMetric(device.Index, IpHlpApi.AfInet) : null;
             var fallbackSettings = device.Index > 1 ? TryGetSettings(device.Index) : null;
-            var status = device.IsDisabled ? "已禁用" : device.HasProblem ? "未就绪" : "已断开";
+            var status = device.IsDisabled ? Loc.T("Core.Nic.State.Disabled")
+                : device.HasProblem ? Loc.T("Core.Nic.State.NotReady")
+                : Loc.T("Core.Nic.State.Down");
             list.Add(new NicInfo
             {
                 Index = device.Index,
@@ -111,7 +114,7 @@ public static class NetworkApi
     {
         if (metric < NicPriority.MinMetric || metric > NicPriority.MaxMetric)
         {
-            throw new ArgumentOutOfRangeException(nameof(metric), $"跃点数应在 {NicPriority.MinMetric} 到 {NicPriority.MaxMetric} 之间。");
+            throw new ArgumentOutOfRangeException(nameof(metric), Loc.F("Core.Nic.MetricRange", NicPriority.MinMetric, NicPriority.MaxMetric));
         }
         ApplyMetric(index, IpHlpApi.AfInet, metric, automatic: false, required: true);
         ApplyMetric(index, IpHlpApi.AfInet6, metric, automatic: false, required: false);
@@ -133,7 +136,7 @@ public static class NetworkApi
         }
         target ??= devices.FirstOrDefault(item => nic.Index > 0 && item.Index == nic.Index);
         target ??= devices.FirstOrDefault(item => item.ConnectionName.Length > 0 && string.Equals(item.ConnectionName, nic.Name, StringComparison.CurrentCultureIgnoreCase));
-        if (target is null) throw new InvalidOperationException($"找不到网卡“{nic.Name}”对应的设备，可能已被移除。");
+        if (target is null) throw new InvalidOperationException(Loc.F("Core.Nic.DeviceNotFound", nic.Name));
 
         try
         {
@@ -143,7 +146,7 @@ public static class NetworkApi
         {
             if (!TrySetEnabledByNetsh(nic.Name, enabled, out var error))
             {
-                throw new InvalidOperationException($"{ex.Message}（备用方式也失败：{error}）");
+                throw new InvalidOperationException(Loc.F("Core.Nic.FallbackFailed", ex.Message, error));
             }
         }
     }
@@ -246,7 +249,7 @@ public static class NetworkApi
     }
 
     private static string CombineError(string error, string fallbackError) =>
-        fallbackError.Length > 0 ? $"{error}（备用方式也失败：{fallbackError}）" : error;
+        fallbackError.Length > 0 ? Loc.F("Core.Nic.FallbackFailed", error, fallbackError) : error;
 
     private static bool TrySetMetricByPowerShell(int index, int? metric, bool automatic, out string error)
     {
@@ -291,7 +294,7 @@ public static class NetworkApi
             using var process = Process.Start(startInfo);
             if (process is null)
             {
-                error = "无法启动 PowerShell。";
+                error = Loc.T("Core.Nic.PowerShellStartFailed");
                 return false;
             }
             var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
@@ -312,22 +315,22 @@ public static class NetworkApi
 
     private static IpHlpApi.MibIpInterfaceRow ReadInterfaceRow(int index, ushort family)
     {
-        if (index <= 0) throw new InvalidOperationException("接口序号无效。");
+        if (index <= 0) throw new InvalidOperationException(Loc.T("Core.Nic.IndexInvalid"));
         if (IpHlpApi.ConvertInterfaceIndexToLuid((uint)index, out var luid) != 0)
         {
-            throw new InvalidOperationException($"接口序号 {index} 无效或该网卡已被移除。");
+            throw new InvalidOperationException(Loc.F("Core.Nic.IndexInvalidDetail", index));
         }
         var row = new IpHlpApi.MibIpInterfaceRow { Family = family, InterfaceLuid = luid, InterfaceIndex = (uint)index };
         var result = IpHlpApi.GetIpInterfaceEntry(ref row);
-        if (result != 0) throw new InvalidOperationException($"读取该网卡的 IP 配置失败（错误码 {result}）。");
+        if (result != 0) throw new InvalidOperationException(Loc.F("Core.Nic.ConfigReadFailed", result));
         return row;
     }
 
     private static string DescribeInterfaceError(uint result) => result switch
     {
-        5 => "设置失败：需要管理员权限。",
-        87 => "设置失败：网卡或跃点数不被系统接受。",
-        _ => $"设置失败（错误码 {result}）。",
+        5 => Loc.T("Core.Nic.SetNeedsAdmin"),
+        87 => Loc.T("Core.Nic.SetRejected"),
+        _ => Loc.F("Core.Nic.SetFailed", result),
     };
 
     private static bool TrySetEnabledByNetsh(string connectionName, bool enabled, out string error)
@@ -335,7 +338,7 @@ public static class NetworkApi
         error = string.Empty;
         if (string.IsNullOrWhiteSpace(connectionName))
         {
-            error = "缺少网卡名称。";
+            error = Loc.T("Core.Nic.NameMissing");
             return false;
         }
         try
@@ -355,7 +358,7 @@ public static class NetworkApi
             using var process = Process.Start(startInfo);
             if (process is null)
             {
-                error = "无法启动 netsh。";
+                error = Loc.T("Core.Nic.NetshStartFailed");
                 return false;
             }
             var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();

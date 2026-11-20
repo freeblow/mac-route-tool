@@ -1,4 +1,5 @@
 using System.Net.NetworkInformation;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -8,9 +9,9 @@ public static class PingProbe
     {
         if (route.Destination.EndsWith("/32", StringComparison.Ordinal) && Ipv4.TryParse(route.Destination.Split('/')[0], out var host))
         {
-            return (Ipv4.ToText(host), "目标");
+            return (Ipv4.ToText(host), Loc.T("Core.Ping.Target"));
         }
-        return (route.Gateway, "网关");
+        return (route.Gateway, Loc.T("Core.Ping.Gateway"));
     }
 
     public static async Task<string> ProbeAsync(RouteEntry route, int timeoutMs = 2000)
@@ -21,12 +22,12 @@ public static class PingProbe
             using var ping = new Ping();
             var reply = await ping.SendPingAsync(address, timeoutMs).ConfigureAwait(false);
             return reply.Status == IPStatus.Success
-                ? $"{label} {address}：可达 · {reply.RoundtripTime} ms"
-                : $"{label} {address}：未响应（{reply.Status}，可能禁用 Ping）";
+                ? Loc.F("Core.Ping.Reachable", label, address, reply.RoundtripTime)
+                : Loc.F("Core.Ping.NoResponse", label, address, reply.Status);
         }
         catch (Exception ex)
         {
-            return $"{label} {address}：测试失败 · {ex.Message}";
+            return Loc.F("Core.Ping.Failed", label, address, ex.Message);
         }
     }
 

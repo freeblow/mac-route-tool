@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -70,7 +71,7 @@ public static class DiscoveryRoute
         Cleanup(interfaceIndex);
         if (Find(interfaceIndex) is not null)
         {
-            OperationLog.Write($"局域网发现：网卡 #{interfaceIndex} 的组播路由已经在，跳过重复写入");
+            OperationLog.Write(Loc.F("Core.Discovery.RouteExistsLog", interfaceIndex));
             return;
         }
         var arguments = new List<string> { "-p", "add", GroupText, "mask", "255.255.255.255", "0.0.0.0" };
@@ -79,16 +80,18 @@ public static class DiscoveryRoute
         PersistentRoutes.Invalidate();
         var text = (output ?? string.Empty).Trim();
         var command = "route " + string.Join(' ', arguments);
-        OperationLog.Write($"执行 {command} → 退出码 {code}；输出：{(text.Length > 0 ? text : "（空）")}");
+        OperationLog.Write(Loc.F("Core.Discovery.RunLog", command, code, text.Length > 0 ? text : Loc.T("Core.Empty")));
         if (code != 0 && !AlreadyThere(text))
         {
-            throw new InvalidOperationException($"命令 {command} 没成功（退出码 {code}）：{(text.Length > 0 ? text : "没有任何输出")}");
+            throw new InvalidOperationException(Loc.F("Core.Discovery.CommandFailed", command, code,
+                text.Length > 0 ? text : Loc.T("Core.Discovery.NoOutput")));
         }
 
         var rows = Query();
         OperationLog.Write(rows.Count == 1
-            ? $"写入后复查：组播路由只剩 1 条，走网卡 #{rows[0].InterfaceIndex}"
-            : $"写入后复查：组播路由有 {rows.Count} 条（{string.Join("、", rows.Select(row => "#" + row.InterfaceIndex))}），和平常不太一样");
+            ? Loc.F("Core.Discovery.VerifySingle", rows[0].InterfaceIndex)
+            : Loc.F("Core.Discovery.VerifyMultiple", rows.Count,
+                string.Join(Loc.T("Core.List.Separator"), rows.Select(row => "#" + row.InterfaceIndex))));
     }
 
     /// <summary>把设置撤掉：删掉路由表里的条目，并把持久化副本一起清掉。</summary>
@@ -99,7 +102,7 @@ public static class DiscoveryRoute
         var (code, output) = RouteService.RunProcess("route.exe", arguments);
         PersistentRoutes.Remove(Group, uint.MaxValue, 0);
         PersistentRoutes.Invalidate();
-        OperationLog.Write($"执行 route {string.Join(' ', arguments)} → 退出码 {code}；输出：{(output ?? string.Empty).Trim()}");
+        OperationLog.Write(Loc.F("Core.Discovery.RunLog", "route " + string.Join(' ', arguments), code, (output ?? string.Empty).Trim()));
     }
 
     /// <summary>写入前先把以前留下的条目清干净：别的网卡上的、指向回环的、以及各种持久化副本。</summary>
@@ -109,13 +112,14 @@ public static class DiscoveryRoute
         var others = stale.Where(row => row.InterfaceIndex != keepInterface).ToList();
         if (others.Count == 0) return;
 
-        var before = string.Join("、", others.Select(row => $"网卡 #{row.InterfaceIndex}（跃点 {row.Metric}）"));
+        var before = string.Join(Loc.T("Core.List.Separator"),
+            others.Select(row => Loc.F("Core.Discovery.NicMetric", row.InterfaceIndex, row.Metric)));
         // 不带 IF 的 route delete 会把指向这个目标的所有条目一次删掉，连指向回环的残留一起清。
         var (code, output) = RouteService.RunProcess("route.exe", new[] { "delete", GroupText });
         PersistentRoutes.Remove(Group, uint.MaxValue, 0);
         RemoveFromPolicyStore();
         PersistentRoutes.Invalidate();
-        OperationLog.Write($"清掉 {others.Count} 条旧的组播路由（{before}）→ 退出码 {code}；输出：{(output ?? string.Empty).Trim()}");
+        OperationLog.Write(Loc.F("Core.Discovery.CleanupLog", others.Count, before, code, (output ?? string.Empty).Trim()));
     }
 
     /// <summary>旧版 SRM.ps1 用 PowerShell 写过持久路由，那一份存在 NetTCPIP 存储里，得单独清。</summary>

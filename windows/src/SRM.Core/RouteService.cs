@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -22,7 +23,7 @@ public sealed class RouteService
         if (Errors.TryGetValue(route.Id, out var error)) return new RouteStatus { State = RouteState.Failed, Message = error };
         if (!Ipv4.TryParseSubnet(route.Destination, out var network, out var mask) || !Ipv4.TryParse(route.Gateway, out var gateway))
         {
-            return new RouteStatus { State = RouteState.Failed, Message = "目标或网关格式不正确。" };
+            return new RouteStatus { State = RouteState.Failed, Message = Loc.T("Core.Route.BadTargetOrGateway") };
         }
         var prefix = Ipv4.PrefixFromMask(mask);
         var active = FindActiveRoute(network, prefix, gateway, route.InterfaceIndex);
@@ -30,7 +31,7 @@ public sealed class RouteService
         var persistent = PersistentRoutes.Contains(network, mask, gateway);
         return persistent
             ? new RouteStatus { State = RouteState.Active }
-            : new RouteStatus { State = RouteState.Active, Message = "已生效，但未写入持久路由表。" };
+            : new RouteStatus { State = RouteState.Active, Message = Loc.T("Core.Route.ActiveNotPersistent") };
     }
 
     public void Sync()
@@ -55,11 +56,11 @@ public sealed class RouteService
         if (!route.Enabled) return;
         if (!Ipv4.TryParseSubnet(route.Destination, out var network, out var mask))
         {
-            throw new InvalidOperationException("目标格式不正确，应为 IPv4 或 CIDR。");
+            throw new InvalidOperationException(Loc.T("Core.Route.BadDestination"));
         }
         if (!Ipv4.TryParse(route.Gateway, out var gateway))
         {
-            throw new InvalidOperationException("网关格式不正确。");
+            throw new InvalidOperationException(Loc.T("Core.Route.BadGateway"));
         }
         var prefix = Ipv4.PrefixFromMask(mask);
         var active = FindActiveRoute(network, prefix, gateway, route.InterfaceIndex);
@@ -80,11 +81,11 @@ public sealed class RouteService
     {
         if (!Ipv4.TryParseSubnet(route.Destination, out var network, out var mask))
         {
-            throw new InvalidOperationException("目标格式不正确，应为 IPv4 或 CIDR。");
+            throw new InvalidOperationException(Loc.T("Core.Route.BadDestination"));
         }
         if (!Ipv4.TryParse(route.Gateway, out var gateway))
         {
-            throw new InvalidOperationException("网关格式不正确。");
+            throw new InvalidOperationException(Loc.T("Core.Route.BadGateway"));
         }
         var arguments = new List<string>
         {
@@ -132,7 +133,7 @@ public sealed class RouteService
     private static string DescribeRouteError(string output, RouteEntry route)
     {
         var text = (output ?? string.Empty).Trim();
-        if (text.Length == 0) return $"写入路由 {route.Destination} 失败。";
+        if (text.Length == 0) return Loc.F("Core.Route.WriteFailed", route.Destination);
         return text.Length > 300 ? text[..300] : text;
     }
 
@@ -147,7 +148,7 @@ public sealed class RouteService
         };
         foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
         using var process = Process.Start(startInfo);
-        if (process is null) return (-1, $"无法启动 {fileName}。");
+        if (process is null) return (-1, Loc.F("Core.Route.RunFailed", fileName));
         var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
         process.WaitForExit(20000);
         return (process.ExitCode, output);

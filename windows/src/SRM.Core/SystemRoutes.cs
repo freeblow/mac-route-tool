@@ -1,3 +1,5 @@
+using SRM.Core.Localization;
+
 namespace SRM.Core;
 
 public enum SystemRouteKind
@@ -60,10 +62,8 @@ public static class SystemRoutes
                 Address = Ipv4.ToText(destination),
                 Mask = maskText,
                 Gateway = gatewayText,
-                Source = discovery ? "局域网发现（SRM 设置）" : "持久路由",
-                Detail = discovery
-                    ? "SRM 为了让局域网发现（LocalSend 等）从指定网卡发出去而添加；想关掉可以在「网卡优先级」页点「让局域网发现走这块网卡」按钮。"
-                    : "由其它程序或旧版本添加，重启后依然存在。确定没用了可以删掉。",
+                Source = Loc.T(discovery ? "Core.SysRoute.Source.Discovery" : "Core.SysRoute.Source.Persistent"),
+                Detail = Loc.T(discovery ? "Core.SysRoute.Detail.Discovery" : "Core.SysRoute.Detail.Persistent"),
             });
         }
 
@@ -79,14 +79,14 @@ public static class SystemRoutes
                 Address = "0.0.0.0",
                 Mask = "0.0.0.0",
                 Gateway = adapter.Gateway,
-                Source = adapter.Legacy ? $"网卡旧配置残留（{adapter.Name}）"
-                    : adapter.EnableDhcp ? $"网卡残留网关（{adapter.Name}）"
-                    : $"网卡静态网关（{adapter.Name}）",
+                Source = Loc.F(adapter.Legacy ? "Core.SysRoute.Source.Legacy"
+                    : adapter.EnableDhcp ? "Core.SysRoute.Source.DhcpLeftover"
+                    : "Core.SysRoute.Source.StaticGateway", adapter.Name),
                 Detail = adapter.Legacy
-                    ? $"注册表老位置里还留着 {adapter.Address} / 网关 {adapter.Gateway}，现在系统用的是新位置那份配置，所以暂时不生效；想彻底清掉，在「网络连接」里把这块网卡改成自动获取 IP 再保存一次。"
+                    ? Loc.F("Core.SysRoute.Detail.Legacy", adapter.Address, adapter.Gateway)
                     : adapter.EnableDhcp
-                        ? $"「{adapter.Name}」现在是自动获取 IP，属性里还留着旧的静态网关 {adapter.Gateway}（静态地址 {adapter.Address}）。"
-                        : $"「{adapter.Name}」的 IP 是手动设的静态地址 {adapter.Address}，网关 {adapter.Gateway}；要改请在网卡属性里改。",
+                        ? Loc.F("Core.SysRoute.Detail.DhcpLeftover", adapter.Name, adapter.Gateway, adapter.Address)
+                        : Loc.F("Core.SysRoute.Detail.Static", adapter.Name, adapter.Address, adapter.Gateway),
             });
         }
 

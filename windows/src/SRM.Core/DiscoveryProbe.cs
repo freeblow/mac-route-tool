@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -26,10 +27,19 @@ public static class DiscoveryProbe
         /// <summary>知道是系统里哪块网卡时，这里是网卡序号；不知道就是 0。</summary>
         public int InterfaceIndex { get; init; }
 
-        /// <summary>“实测”= 真发包看计数；“系统选的”= 问系统的源地址；“估算”= 只看路由表；空 = 测不出来。</summary>
+        /// <summary>出口是怎么定下来的：measured 真发包看计数、lookup 问系统的源地址、estimated 只看路由表、空 = 测不出来。</summary>
         public string Method { get; init; } = string.Empty;
 
-        public bool Measured => Method.StartsWith("实测", StringComparison.Ordinal);
+        /// <summary>给界面看的说法（跟着语言走）。</summary>
+        public string MethodText => Method switch
+        {
+            "measured" => Loc.T("Core.Probe.Method.Measured"),
+            "lookup" => Loc.T("Core.Probe.Method.Lookup"),
+            "estimated" => Loc.T("Core.Probe.Method.Estimated"),
+            _ => string.Empty,
+        };
+
+        public bool Measured => Method == "measured";
         public bool Known => Address != 0;
     }
 
@@ -63,7 +73,7 @@ public static class DiscoveryProbe
         {
             Address = address,
             InterfaceIndex = address == 0 ? 0 : IndexOfAddress(address),
-            Method = address == 0 ? string.Empty : "系统选的",
+            Method = address == 0 ? string.Empty : "lookup",
         };
     }
 
@@ -94,14 +104,14 @@ public static class DiscoveryProbe
         var loopback = MeasureByLoopback();
         if (loopback != 0)
         {
-            return new Egress { Address = loopback, InterfaceIndex = IndexOfAddress(loopback), Method = "实测" };
+            return new Egress { Address = loopback, InterfaceIndex = IndexOfAddress(loopback), Method = "measured" };
         }
         var estimate = DiscoveryRoute.ProbeEgressAddress();
         return new Egress
         {
             Address = estimate,
             InterfaceIndex = estimate == 0 ? 0 : IndexOfAddress(estimate),
-            Method = estimate != 0 ? "估算" : string.Empty,
+            Method = estimate != 0 ? "estimated" : string.Empty,
         };
     }
 
@@ -123,7 +133,7 @@ public static class DiscoveryProbe
             {
                 Listening = false,
                 Seconds = seconds,
-                Problem = $"端口 {DiscoveryRoute.Port} 现在被别的程序占着，听不到喊话：{ex.Message}",
+                Problem = Loc.F("Core.Probe.PortBusy", DiscoveryRoute.Port, ex.Message),
             };
         }
 
@@ -235,11 +245,11 @@ public static class DiscoveryProbe
     /// <summary>把地址文本换成界面上的网卡名字，例如 10.40.81.63 → 以太网。</summary>
     public static string DescribeAddress(uint address, IEnumerable<NicInfo> nics)
     {
-        if (address == 0) return "测不出来";
+        if (address == 0) return Loc.T("Core.Probe.Unknown");
         var text = Ipv4.ToText(address);
         var nic = nics.FirstOrDefault(item => item.Address.Split(" / ", StringSplitOptions.RemoveEmptyEntries)
             .Any(part => Ipv4.TryParse(part, out var parsed) && parsed == address));
-        return nic is null ? text : $"{nic.Name}（{text}）";
+        return nic is null ? text : Loc.F("Core.Probe.NicWithAddress", nic.Name, text);
     }
 
     // ================= 内部实现 =================
@@ -333,21 +343,22 @@ public static class DiscoveryProbe
         }
         if (best is null) return null;
         var enough = bestPackets >= packets / 2 || bestBytes >= (long)packets * 500;
-        var text = string.Join("；", candidates.Select(item =>
+        var text = string.Join(Loc.T("Core.Probe.ListSeparator"), candidates.Select(item =>
         {
             try
             {
                 var stats = item.Nic.GetIPv4Statistics();
-                return $"{item.Name} 组播包 +{stats.NonUnicastPacketsSent - item.NonUnicast} / 字节 +{stats.BytesSent - item.Bytes}";
+                return Loc.F("Core.Probe.CounterDelta", item.Name, stats.NonUnicastPacketsSent - item.NonUnicast, stats.BytesSent - item.Bytes);
             }
             catch
             {
-                return $"{item.Name} 读不到计数";
+                return Loc.F("Core.Probe.CounterUnavailable", item.Name);
             }
         }));
-        OperationLog.Write($"实测发现出口：发了 {packets} 个测试包 → {(enough ? DescribeAddress(best.Address, NetworkApi.ListNics()) : "计数没有明显变化")}（{text}）");
+        OperationLog.Write(Loc.F("Core.Probe.MeasureLog", packets,
+            enough ? DescribeAddress(best.Address, NetworkApi.ListNics()) : Loc.T("Core.Probe.NoCounterChange"), text));
         if (!enough) return null;
-        return new Egress { Address = best.Address, InterfaceIndex = best.Index, Method = "实测" };
+        return new Egress { Address = best.Address, InterfaceIndex = best.Index, Method = "measured" };
     }
 
     /// <summary>发几个测试包到组播地址，收自己那份回环副本，看它带着哪个源地址回来。</summary>

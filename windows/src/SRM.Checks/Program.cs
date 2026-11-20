@@ -366,7 +366,7 @@ Console.WriteLine(routeWinner == 0
     ? "  上网出口（默认路由）：没读到"
     : $"  上网出口（默认路由）：#{routeWinner}（{Adapters.Query().FirstOrDefault(item => item.Index == routeWinner)?.Name}）");
 var measuredEgress = DiscoveryProbe.Measure();
-Console.WriteLine($"  真发 120 个测试包实测：{(measuredEgress.Known ? $"{Ipv4.ToText(measuredEgress.Address)}（{measuredEgress.Method}）" : "测不出来")}");
+    Console.WriteLine($"  真发 120 个测试包实测：{(measuredEgress.Known ? $"{Ipv4.ToText(measuredEgress.Address)}（{measuredEgress.MethodText}）" : "测不出来")}");
 Check("出口判定至少给出一个结果", lookup.Known || measuredEgress.Known, "网络全断时才会这样");
 Check("“组播出口要按跃点数挑”的算法能算出结果", bestMulticast.Index != 0 || NetworkApi.ListNics().All(item => item.IsDisabled || item.Metric is null));
 var groupRoutes = DiscoveryRoute.Query();

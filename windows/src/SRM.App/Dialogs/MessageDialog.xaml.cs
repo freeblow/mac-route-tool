@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Markup;
+using SRM.Core.Localization;
 
 namespace SRM.App.Dialogs;
 
@@ -16,19 +18,24 @@ public partial class MessageDialog : Window
 {
     private bool _cancellable;
 
-    private MessageDialog() => InitializeComponent();
+    private MessageDialog()
+    {
+        InitializeComponent();
+        Language = XmlLanguage.GetLanguage(Loc.Culture.IetfLanguageTag);
+    }
 
     public static void Info(Window? owner, string title, string message, string detail = "") =>
-        Show(owner, DialogKind.Info, title, message, detail, "知道了", null);
+        Show(owner, DialogKind.Info, title, message, detail, Loc.T("Ui.Dialog.Ok"), null);
 
     public static void Warning(Window? owner, string title, string message, string detail = "") =>
-        Show(owner, DialogKind.Warning, title, message, detail, "知道了", null);
+        Show(owner, DialogKind.Warning, title, message, detail, Loc.T("Ui.Dialog.Ok"), null);
 
     public static void Error(Window? owner, string title, string message, string detail = "") =>
-        Show(owner, DialogKind.Error, title, message, detail, "知道了", null);
+        Show(owner, DialogKind.Error, title, message, detail, Loc.T("Ui.Dialog.Ok"), null);
 
-    public static bool Confirm(Window? owner, string title, string message, string detail = "", string confirmText = "确定", bool danger = false) =>
-        Show(owner, danger ? DialogKind.Error : DialogKind.Question, title, message, detail, confirmText, "取消");
+    public static bool Confirm(Window? owner, string title, string message, string detail = "", string? confirmText = null, bool danger = false) =>
+        Show(owner, danger ? DialogKind.Error : DialogKind.Question, title, message, detail,
+            confirmText ?? Loc.T("Ui.Dialog.Confirm"), Loc.T("Ui.Dialog.Cancel"));
 
     private static bool Show(Window? owner, DialogKind kind, string title, string message, string detail, string confirmText, string? cancelText)
     {

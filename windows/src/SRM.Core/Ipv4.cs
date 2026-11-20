@@ -1,4 +1,5 @@
 using System.Globalization;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -49,7 +50,7 @@ public static class Ipv4
         var value = (input ?? string.Empty).Trim();
         if (value.Length == 0)
         {
-            error = "请输入目标地址或网段。";
+            error = Loc.T("Core.Ipv4.Empty");
             return false;
         }
         if (string.Equals(value, "default", StringComparison.OrdinalIgnoreCase)) value = "0.0.0.0/0";
@@ -61,13 +62,13 @@ public static class Ipv4
             value = value[..slash];
             if (!int.TryParse(lengthText, NumberStyles.None, CultureInfo.InvariantCulture, out prefix) || prefix > 32)
             {
-                error = "掩码长度应在 0 到 32 之间。";
+                error = Loc.T("Core.Ipv4.MaskRange");
                 return false;
             }
         }
         if (!TryParse(value, out var address))
         {
-            error = "目标地址应为 IPv4 或 CIDR，例如 10.40.85.0/24。";
+            error = Loc.T("Core.Ipv4.BadAddress");
             return false;
         }
         var network = address & MaskFromPrefix(prefix);

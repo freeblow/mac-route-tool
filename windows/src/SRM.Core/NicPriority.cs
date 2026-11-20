@@ -16,7 +16,7 @@ public static class NicPriority
         if (position < 0) return changes;
         if (ordered[position].Metric is null)
         {
-            throw new InvalidOperationException("该网卡已禁用或未启用 IPv4，无法调整优先级；可先点“启用网卡”后再试。");
+            throw new InvalidOperationException(Localization.Loc.T("Core.Nic.PriorityUnavailable"));
         }
         var peerPosition = position + step;
         if (peerPosition < 0 || peerPosition >= ordered.Count) return changes;

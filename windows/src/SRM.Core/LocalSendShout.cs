@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using SRM.Core.Localization;
 
 namespace SRM.Core;
 
@@ -63,7 +64,7 @@ public static class LocalSendShout
             return new Identity
             {
                 Path = path,
-                Problem = $"没找到 LocalSend 的设置文件（{path}）：这台机器上是不是没装 LocalSend？",
+                Problem = Loc.F("Core.Shout.NoSettings", path),
             };
         }
 
@@ -91,14 +92,12 @@ public static class LocalSendShout
                 Fingerprint = fingerprint,
                 Port = port > 0 ? port : DiscoveryRoute.Port,
                 Protocol = secure ? "https" : "http",
-                Problem = fingerprint.Length > 0
-                    ? string.Empty
-                    : "LocalSend 还没生成自己的身份（证书指纹）：先打开一次 LocalSend、随便传一次东西，再回来试。",
+                Problem = fingerprint.Length > 0 ? string.Empty : Loc.T("Core.Shout.NoFingerprint"),
             };
         }
         catch (Exception ex)
         {
-            return new Identity { Path = path, Problem = $"读 LocalSend 的设置失败：{ex.Message}" };
+            return new Identity { Path = path, Problem = Loc.F("Core.Shout.SettingsReadFailed", ex.Message) };
         }
     }
 
@@ -130,7 +129,7 @@ public static class LocalSendShout
                 Asked = count,
                 From = localAddress,
                 InterfaceIndex = interfaceIndex,
-                Problem = identity.Problem.Length > 0 ? identity.Problem : "还没读到 LocalSend 的身份",
+                Problem = identity.Problem.Length > 0 ? identity.Problem : Loc.T("Core.Shout.NoIdentity"),
             };
         }
 
@@ -141,7 +140,7 @@ public static class LocalSendShout
                 Asked = count,
                 From = localAddress,
                 InterfaceIndex = interfaceIndex,
-                Problem = $"「{localAddress}」不是可用的本机地址",
+                Problem = Loc.F("Core.Shout.NotLocalAddress", localAddress),
             };
         }
 
@@ -168,7 +167,7 @@ public static class LocalSendShout
         }
         catch (Exception ex)
         {
-            OperationLog.Write($"从 {localAddress}（网卡 #{interfaceIndex}）喊话失败（已经发出 {sent} 次）：{ex.Message}");
+            OperationLog.Write(Loc.F("Core.Shout.SendFailedLog", localAddress, interfaceIndex, sent, ex.Message));
             return new ShoutResult
             {
                 Asked = count,
@@ -184,8 +183,7 @@ public static class LocalSendShout
         var after = Counters(interfaceIndex);
         var packetDelta = before.Packets >= 0 && after.Packets >= 0 ? after.Packets - before.Packets : -1;
         var byteDelta = before.Bytes >= 0 && after.Bytes >= 0 ? after.Bytes - before.Bytes : -1;
-        OperationLog.Write($"替这台机器喊话：用「{identity.Alias}」的身份从 {localAddress}（网卡 #{interfaceIndex}）喊了 {sent} 次，"
-            + $"这块网卡的组播包计数 +{packetDelta} / 字节 +{byteDelta}；内容：{payload}");
+        OperationLog.Write(Loc.F("Core.Shout.SendLog", identity.Alias, localAddress, interfaceIndex, sent, packetDelta, byteDelta, payload));
 
         return new ShoutResult
         {

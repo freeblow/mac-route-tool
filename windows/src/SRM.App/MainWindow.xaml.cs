@@ -6,9 +6,11 @@ using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Markup;
 using System.Windows.Threading;
 using SRM.App.Dialogs;
 using SRM.Core;
+using SRM.Core.Localization;
 
 namespace SRM.App;
 
@@ -28,6 +30,10 @@ public partial class MainWindow : Window
     /// <summary>最近一次右键点在「IP 检测」列表的哪一行（点在表头或空白处时为空）。</summary>
     private ScanRowVm? _scanMenuRow;
     private SubnetScanPlan? _scanPlan;
+    /// <summary>上一次检测的耗时（切语言重拼摘要要用）；没跑完或没跑过时为空。</summary>
+    private TimeSpan? _scanElapsed;
+    /// <summary>检测被停/失败时摘要行显示的那句话的键（成功时为空）。</summary>
+    private string? _scanSummaryKey;
     private CancellationTokenSource? _scanToken;
     private string? _scanTargetSignature;
     private bool _scanning;
@@ -44,23 +50,71 @@ public partial class MainWindow : Window
     private DateTime _configStamp = DateTime.MinValue;
     private int _tick;
     private bool _busy;
-    private string _statusMessage = "正在读取系统状态…";
+    private bool _languageApplying;
+    private string _statusMessage = Loc.T("Ui.Status.ReadingSystem");
     private DateTime _lastRefresh;
 
     public MainWindow()
     {
+        LocResources.Install();
         InitializeComponent();
+        SetupUi();
+        Loc.LanguageChanged += OnLanguageChanged;
+        Closed += (_, _) => Loc.LanguageChanged -= OnLanguageChanged;
+        _timer.Tick += async (_, _) => await TickAsync();
+        _timer.Start();
+        Dispatcher.InvokeAsync(() => _ = RefreshAllAsync());
+    }
+
+    /// <summary>窗口第一次显示、以及每次重新解析界面之后，都要把代码里设的东西再装回去。</summary>
+    private void SetupUi()
+    {
         RouteGrid.ItemsSource = _routeRows;
         NicGrid.ItemsSource = _nicRows;
         SystemRouteGrid.ItemsSource = _systemRows;
         ScanGrid.ItemsSource = _scanRows;
         ElevationBanner.Visibility = NetworkApi.IsElevated ? Visibility.Collapsed : Visibility.Visible;
-        ElevationBannerText.Text = "当前未以管理员身份运行：写入系统路由、调整跃点数、启停网卡、修改多网卡共存设置都会失败。请关闭窗口后改为右键「以管理员身份运行」。";
-        EnvText.Text = $"配置：{AppInfo.ConfigPath}";
+        ElevationBannerText.Text = Loc.T("Ui.ElevationBanner");
+        EnvText.Text = Loc.F("Ui.Status.Env", AppInfo.ConfigPath);
         HeaderInfoText.Text = $"v{AppInfo.Version}";
-        _timer.Tick += async (_, _) => await TickAsync();
-        _timer.Start();
-        Dispatcher.InvokeAsync(() => _ = RefreshAllAsync());
+        ApplyLanguage();
+    }
+
+    // ================= 语言 =================
+
+    /// <summary>把右上角的语言按钮对齐到当前语言；初始化期间不触发切换。</summary>
+    private void ApplyLanguage()
+    {
+        _languageApplying = true;
+        try
+        {
+            LangZhButton.IsChecked = Loc.Language == Loc.ChineseSimplified;
+            LangEnButton.IsChecked = Loc.Language == Loc.English;
+        }
+        finally
+        {
+            _languageApplying = false;
+        }
+        Language = XmlLanguage.GetLanguage(Loc.Culture.IetfLanguageTag);
+    }
+
+    private void Language_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_languageApplying) return;
+        if ((sender as FrameworkElement)?.Tag is not string language || language == Loc.Language) return;
+        Loc.SetLanguage(language);
+    }
+
+    /// <summary>切了语言：列表里的说法是建行的时候定下来的，重铺一遍最省心。</summary>
+    private async void OnLanguageChanged()
+    {
+        SetupUi();
+        UpdateButtonStates();
+        UpdateStatusBar();
+        RefreshRouteRows();
+        RefreshRouteStatuses();
+        ApplyScanFilter();
+        await RefreshAllAsync();
     }
 
     // ================= 刷新 =================
@@ -68,7 +122,7 @@ public partial class MainWindow : Window
     private async Task RefreshAllAsync()
     {
         if (_busy) return;
-        _statusMessage = "正在读取系统状态…";
+        _statusMessage = Loc.T("Ui.Status.ReadingSystem");
         UpdateStatusBar();
         try
         {
@@ -78,11 +132,11 @@ public partial class MainWindow : Window
             await RefreshSystemRoutesAsync();
             await RefreshNicRowsAsync();
             _lastRefresh = DateTime.Now;
-            _statusMessage = "就绪";
+            _statusMessage = Loc.T("Ui.Status.Ready");
         }
         catch (Exception ex)
         {
-            _statusMessage = "刷新失败：" + Shorten(ex.Message);
+            _statusMessage = Loc.F("Ui.Status.RefreshFailed", Shorten(ex.Message));
         }
         UpdateStatusBar();
         UpdateButtonStates();
@@ -106,7 +160,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _statusMessage = "刷新失败：" + ex.Message;
+            _statusMessage = Loc.F("Ui.Status.RefreshFailed", ex.Message);
             UpdateStatusBar();
         }
     }
@@ -115,7 +169,7 @@ public partial class MainWindow : Window
     {
         if (!NetworkApi.IsElevated) return;
         if (!_routeRows.Any(row => row.NeedsSync)) return;
-        await RunBusyAsync("正在自动同步路由…", () => _service.Sync());
+        await RunBusyAsync(Loc.T("Ui.Route.AutoSyncing"), () => _service.Sync());
         RefreshRouteStatuses();
     }
 
@@ -173,7 +227,7 @@ public partial class MainWindow : Window
         }
         RouteEmptyHint.Visibility = _routeRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         var enabled = entries.Count(item => item.Enabled);
-        RouteSummaryText.Text = entries.Count == 0 ? string.Empty : $"共 {entries.Count} 条 · 已启用 {enabled} 条";
+        RouteSummaryText.Text = entries.Count == 0 ? string.Empty : Loc.F("Ui.Route.Summary", entries.Count, enabled);
     }
 
     private void RefreshRouteStatuses()
@@ -194,7 +248,7 @@ public partial class MainWindow : Window
             if (!route.Enabled)
             {
                 row.NeedsSync = false;
-                row.ApplyStatus(new RouteStatus { State = RouteState.Disabled, Message = "已在配置里停用，不会写入系统路由表。" });
+                row.ApplyStatus(new RouteStatus { State = RouteState.Disabled, Message = Loc.T("Ui.Route.Detail.DisabledByConfig") });
                 continue;
             }
             if (_service.Errors.TryGetValue(route.Id, out var error))
@@ -206,7 +260,7 @@ public partial class MainWindow : Window
             if (!Ipv4.TryParseSubnet(route.Destination, out var network, out var mask) || !Ipv4.TryParse(route.Gateway, out var gateway))
             {
                 row.NeedsSync = false;
-                row.ApplyStatus(new RouteStatus { State = RouteState.Failed, Message = "目标或网关格式不正确，请点「编辑」修正。" });
+                row.ApplyStatus(new RouteStatus { State = RouteState.Failed, Message = Loc.T("Ui.Route.Detail.BadFormat") });
                 continue;
             }
             var prefix = Ipv4.PrefixFromMask(mask);
@@ -216,8 +270,8 @@ public partial class MainWindow : Window
             var persisted = persistent.Any(item => item.StartsWith(wanted, StringComparison.OrdinalIgnoreCase));
             row.NeedsSync = !active || !persisted;
             row.ApplyStatus(active
-                ? new RouteStatus { State = RouteState.Active, Message = persisted ? "已写入系统路由表，重启后依然有效。" : "已生效，但还没有写入持久路由表。" }
-                 : new RouteStatus { State = RouteState.Pending, Message = "尚未写入系统路由表。" });
+                ? new RouteStatus { State = RouteState.Active, Message = Loc.T(persisted ? "Ui.Route.Detail.Persisted" : "Ui.Route.Detail.NotPersisted") }
+                 : new RouteStatus { State = RouteState.Pending, Message = Loc.T("Ui.Route.Detail.NotWritten") });
         }
     }
 
@@ -267,8 +321,8 @@ public partial class MainWindow : Window
         }
         var deletable = _systemRows.Count(item => item.Entry.Removable);
         SystemRouteSummaryText.Text = deletable == 0
-            ? $"共 {_systemRows.Count} 条，都要在网卡属性里改"
-            : $"共 {_systemRows.Count} 条 · 可直接删除 {deletable} 条";
+            ? Loc.F("Ui.SysRoute.SummaryAllManual", _systemRows.Count)
+            : Loc.F("Ui.SysRoute.Summary", _systemRows.Count, deletable);
     }
 
     private async Task RefreshNicRowsAsync()
@@ -321,8 +375,8 @@ public partial class MainWindow : Window
         var racers = _nicRows.Where(row => row.Nic.JoinsExitRace).ToList();
         if (racers.Count > 1)
         {
-            var names = string.Join("、", racers.Select(row => row.NameText));
-            CoexistWarnText.Text = $"检测到 {racers.Count} 块网卡同时在抢上网出口（{names}）：容易互相抢路由，出现“起了这块、那块就不好使”。建议点「一键共存」，只留一块网卡上网，其余改成仅内网。";
+            var names = string.Join(Loc.T("Core.List.Separator"), racers.Select(row => row.NameText));
+            CoexistWarnText.Text = Loc.F("Ui.Coexist.Warning", racers.Count, names);
             CoexistWarnBar.Visibility = Visibility.Visible;
         }
         else
@@ -333,7 +387,7 @@ public partial class MainWindow : Window
 
     private string DescribeInterface(int? index)
     {
-        if (index is not int value || value <= 0) return "自动（按网关判断）";
+        if (index is not int value || value <= 0) return Loc.T("Ui.Route.InterfaceAuto");
         var nic = _lastNics.FirstOrDefault(item => item.Index == value);
         return nic is null ? $"#{value}" : $"{value} · {nic.Name}";
     }
@@ -342,7 +396,7 @@ public partial class MainWindow : Window
     {
         StatusText.Text = _lastRefresh == default
             ? _statusMessage
-            : $"{_statusMessage} · 最后刷新 {_lastRefresh:HH:mm:ss}";
+            : Loc.F("Ui.Status.LastRefresh", _statusMessage, _lastRefresh.ToString("HH:mm:ss"));
     }
 
     private void SetStatus(string message)
@@ -367,7 +421,7 @@ public partial class MainWindow : Window
         SetExitButton.IsEnabled = idle && nic is not null && !nic.IsDisabled && (nic.ConfiguredGateway.Length > 0 || nic.HasDefaultRoute);
         SetInternalButton.IsEnabled = idle && nic is not null && !nic.IsDisabled && nic.Metric is not null;
         WeakHostButton.IsEnabled = idle && nic is not null && !nic.IsDisabled && nic.Metric is not null;
-        WeakHostButton.Content = nic is not null && nic.WeakHostSend && nic.WeakHostReceive ? "禁止跨网卡收发" : "允许跨网卡收发";
+        WeakHostButton.Content = Loc.T(nic is not null && nic.WeakHostSend && nic.WeakHostReceive ? "Ui.Nic.WeakHostOff" : "Ui.Nic.WeakHostOn");
 
         AddRouteButton.IsEnabled = idle;
         SyncRouteButton.IsEnabled = idle;
@@ -376,17 +430,17 @@ public partial class MainWindow : Window
         DeleteRouteButton.IsEnabled = idle && route is not null;
         ToggleRouteButton.IsEnabled = idle && route is not null;
         TestRouteButton.IsEnabled = idle && route is not null;
-        ToggleRouteButton.Content = route is not null && route.Entry.Enabled ? "停用" : "启用";
+        ToggleRouteButton.Content = Loc.T(route is not null && route.Entry.Enabled ? "Ui.Route.Disable" : "Ui.Route.Enable");
         ScanStartButton.IsEnabled = idle;
         ScanStopButton.IsEnabled = _scanning;
         ScanExportButton.IsEnabled = !_scanning && _scanResults.Count > 0;
         DiscoveryButton.IsEnabled = idle && nic is not null && !nic.IsDisabled;
-        DiscoveryButton.Content = nic is not null && _discoveryIndex == nic.Index ? "局域网发现：改回自动" : "让局域网发现走这块网卡";
+        DiscoveryButton.Content = Loc.T(nic is not null && _discoveryIndex == nic.Index ? "Ui.Nic.DiscoveryAuto" : "Ui.Nic.Discovery");
         FixDiscoverButton.IsEnabled = idle && nic is not null && !nic.IsDisabled;
-        FixDiscoverButton.Content = _inboundStatus is { NeedsFix: true } ? "修复：让局域网能发现这台机器" : "让局域网能发现这台机器";
+        FixDiscoverButton.Content = Loc.T(_inboundStatus is { NeedsFix: true } ? "Ui.Nic.FixDiscoveryShort" : "Ui.Nic.FixDiscovery");
         ListenDiscoverButton.IsEnabled = idle;
         ShoutDiscoverButton.IsEnabled = idle && nic is not null && !nic.IsDisabled;
-        KeepShoutButton.Content = _shoutTimer is null ? "一直喊（每 15 秒一次）" : "停止喊话";
+        KeepShoutButton.Content = Loc.T(_shoutTimer is null ? "Ui.Nic.KeepShout" : "Ui.Nic.StopShout");
         KeepShoutButton.IsEnabled = _shoutTimer is not null || (idle && nic is not null && !nic.IsDisabled);
     }
 
@@ -403,8 +457,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            SetStatus("上一步操作失败");
-            AppDialog.Error(this, "操作失败", ex.Message);
+            SetStatus(Loc.T("Ui.Status.ActionFailed"));
+            AppDialog.Error(this, Loc.T("Ui.Dialog.ActionFailed"), ex.Message);
             return false;
         }
         finally
@@ -444,7 +498,7 @@ public partial class MainWindow : Window
         RefreshRouteRows();
         RefreshRouteStatuses();
         if (editor.Result.Enabled) await SyncRouteAsync(editor.Result);
-        SetStatus($"已添加路由 {editor.Result.Destination}。");
+        SetStatus(Loc.F("Ui.Msg.RouteAdded", editor.Result.Destination));
     }
 
     private async void EditRoute_Click(object sender, RoutedEventArgs e)
@@ -482,7 +536,7 @@ public partial class MainWindow : Window
         if (previous.Enabled) await RemoveSystemRouteAsync(previous);
         if (row.Entry.Enabled) await SyncRouteAsync(row.Entry);
         RefreshRouteStatuses();
-        SetStatus($"已保存 {row.Entry.Destination}。");
+        SetStatus(Loc.F("Ui.Msg.RouteSaved", row.Entry.Destination));
     }
 
     private async void ToggleRoute_Click(object sender, RoutedEventArgs e)
@@ -495,16 +549,16 @@ public partial class MainWindow : Window
         RefreshRouteRows();
         RefreshRouteStatuses();
         UpdateButtonStates();
-        SetStatus(row.Entry.Enabled ? $"已启用 {row.Entry.Destination}。" : $"已停用 {row.Entry.Destination}。");
+        SetStatus(Loc.F(row.Entry.Enabled ? "Ui.Msg.RouteEnabled" : "Ui.Msg.RouteDisabled", row.Entry.Destination));
     }
 
     private async void DeleteRoute_Click(object sender, RoutedEventArgs e)
     {
         if (RouteGrid.SelectedItem is not RouteRowVm row) return;
-        var confirmed = AppDialog.Confirm(this, "删除路由",
-            $"确定要删除「{row.Entry.Destination}」吗？",
-            row.Entry.Enabled ? "该路由会立刻从系统路由表中移除，配置文件里的记录也会一起删除。" : "配置文件里的这条记录会被删除。",
-            "删除", danger: true);
+        var confirmed = AppDialog.Confirm(this, Loc.T("Ui.Msg.RouteDeleteTitle"),
+            Loc.F("Ui.Msg.RouteDeleteHeadline", row.Entry.Destination),
+            Loc.T(row.Entry.Enabled ? "Ui.Msg.RouteDeleteDetailOn" : "Ui.Msg.RouteDeleteDetailOff"),
+            Loc.T("Ui.Delete"), danger: true);
         if (!confirmed) return;
         await RemoveSystemRouteAsync(row.Entry);
         _service.Config.Routes.Remove(row.Entry);
@@ -512,20 +566,20 @@ public partial class MainWindow : Window
         SaveConfig();
         RefreshRouteRows();
         RefreshRouteStatuses();
-        SetStatus($"已删除 {row.Entry.Destination}。");
+        SetStatus(Loc.F("Ui.Msg.RouteDeleted", row.Entry.Destination));
     }
 
     private async void SyncRoutes_Click(object sender, RoutedEventArgs e)
     {
         if (_service.Config.Routes.Count == 0)
         {
-            SetStatus("还没有配置任何路由，先点“+ 添加路由”。");
+            SetStatus(Loc.T("Ui.Msg.RouteNoneToSync"));
             return;
         }
-        await RunBusyAsync("正在重新同步全部路由…", () => _service.Sync());
+        await RunBusyAsync(Loc.T("Ui.Route.AutoSyncing"), () => _service.Sync());
         RefreshRouteStatuses();
         var failed = _service.Config.Routes.Count(item => _service.Errors.ContainsKey(item.Id));
-        SetStatus(failed == 0 ? "同步完成，全部路由都已生效。" : $"同步完成，其中 {failed} 条失败。");
+        SetStatus(failed == 0 ? Loc.T("Ui.Msg.RouteSyncDone") : Loc.F("Ui.Msg.RouteSyncFailed", failed));
     }
 
     private async void TestRoute_Click(object sender, RoutedEventArgs e)
@@ -540,14 +594,14 @@ public partial class MainWindow : Window
 
     private async Task TestRouteAsync(RouteRowVm row)
     {
-        row.TestText = "正在测试…";
+        row.TestText = Loc.T("Ui.Msg.RouteTesting");
         var text = await PingProbe.ProbeAsync(row.Entry);
         row.TestText = text;
     }
 
     private async Task SyncRouteAsync(RouteEntry entry)
     {
-        await RunBusyAsync($"正在写入路由 {entry.Destination}…", () =>
+        await RunBusyAsync(Loc.F("Ui.Msg.RouteWriting", entry.Destination), () =>
         {
             try
             {
@@ -560,12 +614,12 @@ public partial class MainWindow : Window
             }
         });
         RefreshRouteStatuses();
-        if (_service.Errors.TryGetValue(entry.Id, out var error)) SetStatus($"写入失败：{Shorten(error)}");
+        if (_service.Errors.TryGetValue(entry.Id, out var error)) SetStatus(Loc.F("Ui.Msg.RouteWriteFailedStatus", Shorten(error)));
     }
 
     private async Task RemoveSystemRouteAsync(RouteEntry entry)
     {
-        await RunBusyAsync($"正在移除路由 {entry.Destination}…", () =>
+        await RunBusyAsync(Loc.F("Ui.Msg.RouteRemoving", entry.Destination), () =>
         {
             try
             {
@@ -587,16 +641,16 @@ public partial class MainWindow : Window
         var entry = row.Entry;
         if (!entry.Removable)
         {
-            AppDialog.Info(this, "这条要手动改", entry.Detail);
+            AppDialog.Info(this, Loc.T("Ui.Msg.SysRouteManualTitle"), entry.Detail);
             return;
         }
-        var detail = $"目标 {entry.Destination} · 网关 {entry.Gateway}" + Environment.NewLine + Environment.NewLine + entry.Detail;
-        if (!AppDialog.Confirm(this, "删除系统路由", "确定要删除这条路由吗？", detail, "删除", danger: true)) return;
-        var ok = await RunBusyAsync($"正在删除路由 {entry.Destination}…", () => SystemRoutes.Remove(entry));
+        var detail = Loc.F("Ui.Msg.SysRouteTargetGateway", entry.Destination, entry.Gateway) + Environment.NewLine + Environment.NewLine + entry.Detail;
+        if (!AppDialog.Confirm(this, Loc.T("Ui.Msg.SysRouteDeleteTitle"), Loc.T("Ui.Msg.SysRouteDeleteHeadline"), detail, Loc.T("Ui.Delete"), danger: true)) return;
+        var ok = await RunBusyAsync(Loc.F("Ui.Msg.RouteRemoving", entry.Destination), () => SystemRoutes.Remove(entry));
         if (!ok) return;
         RefreshRouteStatuses();
         await RefreshSystemRoutesAsync();
-        SetStatus($"已删除系统里的路由 {entry.Destination}（网关 {entry.Gateway}）。");
+        SetStatus(Loc.F("Ui.Msg.SysRouteDeleted", entry.Destination, entry.Gateway));
     }
 
     private static string Shorten(string text) => text.Length > 160 ? text[..160] + "…" : text;
@@ -695,12 +749,14 @@ public partial class MainWindow : Window
         if (_scanning || _busy) return;
         if (!SubnetScan.TryParse(ScanTargetText.Text, out var plan, out var error))
         {
-            AppDialog.Warning(this, "无法开始检测", "这个网段或地址看不明白。", error);
+            AppDialog.Warning(this, Loc.T("Ui.Msg.ScanBadTargetTitle"), Loc.T("Ui.Msg.ScanBadTarget"), error);
             return;
         }
 
         _scanPlan = plan;
         _scanResults = new List<SubnetHost>();
+        _scanElapsed = null;
+        _scanSummaryKey = null;
         _scanRows.Clear();
         ScanEmptyHint.Visibility = Visibility.Collapsed;
         _scanToken = new CancellationTokenSource();
@@ -708,14 +764,14 @@ public partial class MainWindow : Window
         UpdateButtonStates();
         ScanProgressBar.Value = 0;
         ScanProgressBar.Maximum = Math.Max(1, plan.Addresses.Count);
-        ScanSummaryText.Text = $"正在检测 {plan.NetworkText}，共 {plan.Addresses.Count} 个地址…";
-        SetStatus($"正在检测 {plan.NetworkText}…");
+        ScanSummaryText.Text = Loc.F("Ui.Msg.ScanRunning", plan.NetworkText, plan.Addresses.Count);
+        SetStatus(Loc.F("Ui.Msg.ScanRunningStatus", plan.NetworkText));
 
         var progress = new Progress<int>(done =>
         {
             var current = Math.Min(done, plan.Addresses.Count);
             ScanProgressBar.Value = Math.Min(done, ScanProgressBar.Maximum);
-            ScanSummaryText.Text = $"正在检测 {plan.NetworkText}：已完成 {current}/{plan.Addresses.Count}…";
+            ScanSummaryText.Text = Loc.F("Ui.Msg.ScanProgress", plan.NetworkText, current, plan.Addresses.Count);
         });
 
         var watch = Stopwatch.StartNew();
@@ -724,24 +780,24 @@ public partial class MainWindow : Window
             var hosts = await SubnetScan.ScanAsync(plan, progress, _scanToken.Token);
             watch.Stop();
             _scanResults = hosts;
+            _scanElapsed = watch.Elapsed;
             ApplyScanFilter();
-            var summary = BuildScanSummary(plan, hosts, watch.Elapsed);
-            ScanSummaryText.Text = summary;
-            SetStatus(summary);
+            SetStatus(ScanSummaryText.Text);
         }
         catch (OperationCanceledException)
         {
             watch.Stop();
+            _scanSummaryKey = "Ui.Msg.ScanStoppedDetail";
             ApplyScanFilter();
-            ScanSummaryText.Text = "检测已停止，结果不完整；再点一次「开始检测」可以重来。";
-            SetStatus("检测已停止。");
+            SetStatus(Loc.T("Ui.Msg.ScanStopped"));
         }
         catch (Exception ex)
         {
             watch.Stop();
-            ScanSummaryText.Text = "检测失败。";
-            SetStatus("检测失败：" + Shorten(ex.Message));
-            AppDialog.Error(this, "检测失败", ex.Message);
+            _scanSummaryKey = "Ui.Msg.ScanFailedDetail";
+            ApplyScanFilter();
+            SetStatus(Loc.F("Ui.Msg.ScanFailedStatus", Shorten(ex.Message)));
+            AppDialog.Error(this, Loc.T("Ui.Msg.ScanFailedTitle"), ex.Message);
         }
         finally
         {
@@ -756,7 +812,7 @@ public partial class MainWindow : Window
     private void ScanStop_Click(object sender, RoutedEventArgs e)
     {
         if (!_scanning) return;
-        SetStatus("正在停止检测…");
+        SetStatus(Loc.T("Ui.Msg.ScanStopping"));
         _scanToken?.Cancel();
     }
 
@@ -770,22 +826,24 @@ public partial class MainWindow : Window
 
         var parts = new List<string>
         {
-            $"{plan.NetworkText} 共 {hosts.Count} 个地址",
-            $"空闲 {free}",
-            $"已占用 {occupied}",
+            Loc.F("Ui.Msg.ScanSummaryHosts", plan.NetworkText, hosts.Count),
+            Loc.F("Ui.Msg.ScanSummaryFree", free),
+            Loc.F("Ui.Msg.ScanSummaryOccupied", occupied),
         };
-        if (mine > 0) parts.Add($"网关/本机 {mine}");
-        if (reserved > 0) parts.Add($"保留 {reserved}");
-        if (unknown > 0) parts.Add($"查不到 {unknown}");
-        if (plan.InterfaceName.Length > 0) parts.Add($"走「{plan.InterfaceName}」");
-        if (!plan.OnLink && unknown > 0) parts.Add("不在本机网段，只能按 Ping 判断");
-        parts.Add($"用时 {elapsed.TotalSeconds:0.#} 秒");
+        if (mine > 0) parts.Add(Loc.F("Ui.Msg.ScanSummaryMine", mine));
+        if (reserved > 0) parts.Add(Loc.F("Ui.Msg.ScanSummaryReserved", reserved));
+        if (unknown > 0) parts.Add(Loc.F("Ui.Msg.ScanSummaryUnknown", unknown));
+        if (plan.InterfaceName.Length > 0) parts.Add(Loc.F("Ui.Msg.ScanSummaryVia", plan.InterfaceName));
+        if (!plan.OnLink && unknown > 0) parts.Add(Loc.T("Ui.Msg.ScanSummaryPingOnly"));
+        parts.Add(Loc.F("Ui.Msg.ScanSummaryElapsed", elapsed.TotalSeconds.ToString("0.#")));
         return string.Join(" · ", parts);
     }
 
     private void ApplyScanFilter()
     {
         if (ScanEmptyHint is null || ScanEmptyTitle is null || ScanEmptyDetail is null) return;
+        RefreshScanNotes();
+        RefreshScanSummary();
         var filter = ScanFilterCombo.SelectedIndex;
         var source = _scanResults.Where(host => filter switch
         {
@@ -796,10 +854,34 @@ public partial class MainWindow : Window
         _scanRows.Clear();
         foreach (var host in source) _scanRows.Add(new ScanRowVm(host));
         ScanEmptyHint.Visibility = _scanRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        ScanEmptyTitle.Text = _scanResults.Count == 0 ? "还没有检测结果" : "当前筛选下没有符合条件的地址";
-        ScanEmptyDetail.Text = _scanResults.Count == 0
-            ? "填好网段或单个地址，点左上角的「开始检测」"
-            : "把右上角「显示」切回「全部」就能看到全部地址。";
+        ScanEmptyTitle.Text = Loc.T(_scanResults.Count == 0 ? "Ui.Scan.EmptyTitle" : "Ui.Msg.ScanEmptyFiltered");
+        ScanEmptyDetail.Text = Loc.T(_scanResults.Count == 0 ? "Ui.Scan.EmptyDetail" : "Ui.Msg.ScanEmptyFilteredDetail");
+    }
+
+    /// <summary>结果的说明文字是扫描时写进去的；切了语言就按当前语言重算一遍（其它字段不动）。</summary>
+    private void RefreshScanNotes()
+    {
+        if (_scanPlan is null || _scanResults.Count == 0) return;
+        for (var i = 0; i < _scanResults.Count; i++)
+        {
+            var host = _scanResults[i];
+            var note = SubnetScan.Describe(_scanPlan, host);
+            if (string.Equals(note, host.Note, StringComparison.Ordinal)) continue;
+            _scanResults[i] = new SubnetHost { Address = host.Address, State = host.State, Mac = host.Mac, RttMs = host.RttMs, Note = note };
+        }
+    }
+
+    /// <summary>摘要行也是扫描结束时拼好的；切了语言就按当前语言重拼一遍。</summary>
+    private void RefreshScanSummary()
+    {
+        if (ScanSummaryText is null || _scanPlan is null) return;
+        if (_scanSummaryKey is not null)
+        {
+            ScanSummaryText.Text = Loc.T(_scanSummaryKey);
+            return;
+        }
+        if (_scanElapsed is TimeSpan elapsed && _scanResults.Count > 0)
+            ScanSummaryText.Text = BuildScanSummary(_scanPlan, _scanResults, elapsed);
     }
 
     private void ScanFilter_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyScanFilter();
@@ -810,13 +892,16 @@ public partial class MainWindow : Window
         var target = (_scanPlan?.NetworkText ?? "ip").Replace('/', '_').Replace(':', '_');
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
-            Title = "导出检测结果",
-            Filter = "CSV 文件|*.csv",
+            Title = Loc.T("Ui.Msg.ScanExportTitle"),
+            Filter = Loc.T("Ui.Msg.ScanExportFilter"),
             DefaultExt = "csv",
             FileName = $"ip-scan-{target}-{DateTime.Now:yyyyMMdd-HHmm}.csv",
         };
         if (dialog.ShowDialog(this) != true) return;
-        var lines = new List<string> { "地址,状态,MAC 地址,响应,说明" };
+        var lines = new List<string>
+        {
+            string.Join(",", Loc.T("Ui.Scan.ColAddress"), Loc.T("Ui.Col.Status"), Loc.T("Ui.Scan.ColMac"), Loc.T("Ui.Scan.ColRtt"), Loc.T("Ui.Col.Detail")),
+        };
         foreach (var host in _scanResults)
         {
             lines.Add(string.Join(",",
@@ -832,11 +917,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AppDialog.Error(this, "导出失败", ex.Message);
+            AppDialog.Error(this, Loc.T("Ui.Msg.ScanExportFailedTitle"), ex.Message);
             return;
         }
-        SetStatus($"已导出 {_scanResults.Count} 个地址到 {Path.GetFileName(dialog.FileName)}。");
-        AppDialog.Info(this, "导出完成", "检测结果已经保存到：", dialog.FileName);
+        SetStatus(Loc.F("Ui.Msg.ScanExported", _scanResults.Count, Path.GetFileName(dialog.FileName)));
+        AppDialog.Info(this, Loc.T("Ui.Msg.ScanExportDoneTitle"), Loc.T("Ui.Msg.ScanExportDoneBody"), dialog.FileName);
     }
 
     private static string CsvText(string value) =>
@@ -865,7 +950,7 @@ public partial class MainWindow : Window
     private void ScanGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (RowOf(ScanGrid, e.OriginalSource)?.Item is not ScanRowVm row) return;
-        if (TryCopyToClipboard(row.AddressText)) SetStatus($"已复制地址 {row.AddressText}。");
+        if (TryCopyToClipboard(row.AddressText)) SetStatus(Loc.F("Ui.Msg.CopyAddressDone", row.AddressText));
     }
 
     /// <summary>要复制哪几行：右键点中的那一行，或者当前选中的一批。</summary>
@@ -881,11 +966,11 @@ public partial class MainWindow : Window
         var rows = ScanCopyTargets();
         if (rows.Count == 0)
         {
-            SetStatus("先选中一行，或者右键点在某一行上，再复制。");
+            SetStatus(Loc.T("Ui.Msg.CopyPickRow"));
             return;
         }
         if (!TryCopyToClipboard(CopyText.Lines(rows.Select(row => row.AddressText)))) return;
-        SetStatus(rows.Count == 1 ? $"已复制地址 {rows[0].AddressText}。" : $"已复制 {rows.Count} 个地址。");
+        SetStatus(rows.Count == 1 ? Loc.F("Ui.Msg.CopyAddressDone", rows[0].AddressText) : Loc.F("Ui.Msg.CopyAddressesDone", rows.Count));
     }
 
     private void ScanCopyRow_Click(object sender, RoutedEventArgs e)
@@ -893,13 +978,13 @@ public partial class MainWindow : Window
         var rows = ScanCopyTargets();
         if (rows.Count == 0)
         {
-            SetStatus("先选中一行，或者右键点在某一行上，再复制。");
+            SetStatus(Loc.T("Ui.Msg.CopyPickRow"));
             return;
         }
         if (!TryCopyToClipboard(CopyText.Lines(rows.Select(row => CopyText.SubnetRow(row.Host))))) return;
         SetStatus(rows.Count == 1
-            ? $"已复制 {rows[0].AddressText} 这一行（列之间是 Tab，可以直接粘进 Excel）。"
-            : $"已复制 {rows.Count} 行。");
+            ? Loc.F("Ui.Msg.CopyScanRowDone", rows[0].AddressText)
+            : Loc.F("Ui.Msg.CopyRowsDone", rows.Count));
     }
 
     private void ScanCopyAll_Click(object sender, RoutedEventArgs e)
@@ -907,66 +992,66 @@ public partial class MainWindow : Window
         var hosts = _scanRows.Select(row => row.Host).ToList();
         if (hosts.Count == 0)
         {
-            SetStatus("列表里还没有结果可以复制。");
+            SetStatus(Loc.T("Ui.Msg.CopyNothingInList"));
             return;
         }
         if (!TryCopyToClipboard(CopyText.SubnetTable(hosts))) return;
-        SetStatus($"已复制列表里的 {hosts.Count} 个地址（含表头）。");
+        SetStatus(Loc.F("Ui.Msg.CopyAllDone", hosts.Count));
     }
 
     private void NicCopyRow_Click(object sender, RoutedEventArgs e)
     {
         if (NicGrid.SelectedItem is not NicRowVm row)
         {
-            SetStatus("先在列表里点一下要复制的网卡。");
+            SetStatus(Loc.T("Ui.Msg.CopyPickNic"));
             return;
         }
         if (!TryCopyToClipboard(CopyText.NicRow(row))) return;
-        SetStatus($"已复制「{row.NameText}」的信息（列之间是 Tab）。");
+        SetStatus(Loc.F("Ui.Msg.CopyNicInfoDone", row.NameText));
     }
 
     private void NicCopyAddress_Click(object sender, RoutedEventArgs e)
     {
         if (NicGrid.SelectedItem is not NicRowVm row)
         {
-            SetStatus("先在列表里点一下要复制的网卡。");
+            SetStatus(Loc.T("Ui.Msg.CopyPickNic"));
             return;
         }
         if (!TryCopyToClipboard(row.AddressText)) return;
-        SetStatus($"已复制 {row.NameText} 的地址 {row.AddressText}。");
+        SetStatus(Loc.F("Ui.Msg.CopyNicAddressDone", row.NameText, row.AddressText));
     }
 
     private void RouteCopyRow_Click(object sender, RoutedEventArgs e)
     {
         if (RouteGrid.SelectedItem is not RouteRowVm row)
         {
-            SetStatus("先在列表里点一下要复制的路由。");
+            SetStatus(Loc.T("Ui.Msg.CopyPickRoute"));
             return;
         }
         if (!TryCopyToClipboard(CopyText.RouteRow(row))) return;
-        SetStatus($"已复制路由 {row.DestinationText}（列之间是 Tab）。");
+        SetStatus(Loc.F("Ui.Msg.CopyRouteDone", row.DestinationText));
     }
 
     private void RouteCopyTarget_Click(object sender, RoutedEventArgs e)
     {
         if (RouteGrid.SelectedItem is not RouteRowVm row)
         {
-            SetStatus("先在列表里点一下要复制的路由。");
+            SetStatus(Loc.T("Ui.Msg.CopyPickRoute"));
             return;
         }
         if (!TryCopyToClipboard(row.DestinationText)) return;
-        SetStatus($"已复制网段 {row.DestinationText}。");
+        SetStatus(Loc.F("Ui.Msg.CopySubnetDone", row.DestinationText));
     }
 
     private void SystemRouteCopyRow_Click(object sender, RoutedEventArgs e)
     {
         if (SystemRouteGrid.SelectedItem is not SystemRouteRowVm row)
         {
-            SetStatus("先在列表里点一下要复制的行。");
+            SetStatus(Loc.T("Ui.Msg.CopyPickSystemRow"));
             return;
         }
         if (!TryCopyToClipboard(CopyText.SystemRouteRow(row))) return;
-        SetStatus($"已复制 {row.DestinationText} 这一行。");
+        SetStatus(Loc.F("Ui.Msg.CopySystemRowDone", row.DestinationText));
     }
 
     /// <summary>点到的是哪一行：从鼠标点到的控件往上找 DataGridRow。</summary>
@@ -978,7 +1063,7 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrEmpty(text))
         {
-            SetStatus("这一行没有可复制的内容。");
+            SetStatus(Loc.T("Ui.Msg.CopyRowEmpty"));
             return false;
         }
         for (var attempt = 0; attempt < 3; attempt++)
@@ -994,11 +1079,11 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                SetStatus("复制失败：" + Shorten(ex.Message));
+                SetStatus(Loc.F("Ui.Msg.CopyFailed", Shorten(ex.Message)));
                 return false;
             }
         }
-        SetStatus("复制失败：剪贴板正被别的程序占着，稍后再点一次。");
+        SetStatus(Loc.T("Ui.Msg.CopyClipboardBusy"));
         return false;
     }
 
@@ -1019,22 +1104,22 @@ public partial class MainWindow : Window
         }
         catch (InvalidOperationException ex)
         {
-            AppDialog.Warning(this, "无法调整优先级", ex.Message);
+            AppDialog.Warning(this, Loc.T("Ui.Msg.PriorityFailedTitle"), ex.Message);
             return;
         }
         if (changes.Count == 0)
         {
-            SetStatus(step < 0 ? "已经是列表中优先级最高的网卡了。" : "已经是列表中优先级最低的网卡了。");
+            SetStatus(Loc.T(step < 0 ? "Ui.Msg.PriorityTop" : "Ui.Msg.PriorityBottom"));
             return;
         }
         var name = row.Nic.Name;
-        var ok = await RunBusyAsync($"正在调整「{name}」的优先级…", () =>
+        var ok = await RunBusyAsync(Loc.F("Ui.Msg.PriorityAdjusting", name), () =>
         {
             foreach (var (index, metric) in changes) NetworkApi.SetNicMetric(index, metric);
         });
         if (!ok) return;
         await RefreshNicRowsAsync();
-        SetStatus($"「{name}」的跃点数已更新，重启后依然有效。");
+        SetStatus(Loc.F("Ui.Msg.PriorityUpdated", name));
     }
 
     private async void AutoMetric_Click(object sender, RoutedEventArgs e)
@@ -1042,49 +1127,49 @@ public partial class MainWindow : Window
         if (NicGrid.SelectedItem is not NicRowVm row) return;
         if (row.Nic.Metric is null)
         {
-            AppDialog.Warning(this, "无法设置", "该网卡没有可用的 IPv4 配置，请先启用网卡或检查驱动。");
+            AppDialog.Warning(this, Loc.T("Ui.Msg.NicNoConfigTitle"), Loc.T("Ui.Msg.NicNoConfig"));
             return;
         }
         if (!row.IsAutomatic)
         {
-            var confirmed = AppDialog.Confirm(this, "恢复自动跃点",
-                $"把「{row.Nic.Name}」交回系统自动排序？",
-                "手动设置的跃点数会被清除，Windows 会按网卡速率和连接情况自动决定优先级。",
-                "恢复自动");
+            var confirmed = AppDialog.Confirm(this, Loc.T("Ui.Msg.AutoMetricTitle"),
+                Loc.F("Ui.Msg.AutoMetricHeadline", row.Nic.Name),
+                Loc.T("Ui.Msg.AutoMetricDetail"),
+                Loc.T("Ui.Msg.AutoMetricConfirm"));
             if (!confirmed) return;
         }
         var name = row.Nic.Name;
-        var ok = await RunBusyAsync($"正在恢复「{name}」的自动跃点…", () => NetworkApi.ResetNicMetric(row.Nic.Index));
+        var ok = await RunBusyAsync(Loc.F("Ui.Msg.AutoMetricRunning", name), () => NetworkApi.ResetNicMetric(row.Nic.Index));
         if (!ok) return;
         await RefreshNicRowsAsync();
-        SetStatus($"「{name}」已恢复为自动跃点。");
+        SetStatus(Loc.F("Ui.Msg.AutoMetricDone", name));
     }
 
     private async void DisableNic_Click(object sender, RoutedEventArgs e)
     {
         if (NicGrid.SelectedItem is not NicRowVm row) return;
-        var confirmed = AppDialog.Confirm(this, "禁用网卡",
-            $"确定要禁用「{row.Nic.Name}」吗？",
-            "效果等同于在「网络连接」里右键禁用：会立刻断开这块网卡的连接，之后可以随时再启用。",
-            "禁用网卡", danger: true);
+        var confirmed = AppDialog.Confirm(this, Loc.T("Ui.Nic.Disable"),
+            Loc.F("Ui.Msg.DisableNicHeadline", row.Nic.Name),
+            Loc.T("Ui.Msg.DisableNicDetail"),
+            Loc.T("Ui.Nic.Disable"), danger: true);
         if (!confirmed) return;
         var name = row.Nic.Name;
-        var ok = await RunBusyAsync($"正在禁用「{name}」…", () => NetworkApi.SetNicEnabled(row.Nic, false));
+        var ok = await RunBusyAsync(Loc.F("Ui.Msg.DisablingNic", name), () => NetworkApi.SetNicEnabled(row.Nic, false));
         if (!ok) return;
         await Task.Delay(800);
         await RefreshNicRowsAsync();
-        SetStatus($"「{name}」已禁用。");
+        SetStatus(Loc.F("Ui.Msg.NicDisabled", name));
     }
 
     private async void EnableNic_Click(object sender, RoutedEventArgs e)
     {
         if (NicGrid.SelectedItem is not NicRowVm row) return;
         var name = row.Nic.Name;
-        var ok = await RunBusyAsync($"正在启用「{name}」…", () => NetworkApi.SetNicEnabled(row.Nic, true));
+        var ok = await RunBusyAsync(Loc.F("Ui.Msg.EnablingNic", name), () => NetworkApi.SetNicEnabled(row.Nic, true));
         if (!ok) return;
         await Task.Delay(800);
         await RefreshNicRowsAsync();
-        SetStatus($"「{name}」已启用。");
+        SetStatus(Loc.F("Ui.Msg.NicEnabled", name));
     }
 
     // ================= 多网卡共存 =================
@@ -1094,28 +1179,28 @@ public partial class MainWindow : Window
         var nics = _lastNics;
         if (nics.Count == 0)
         {
-            AppDialog.Warning(this, "暂时没有网卡", "还没有读到网卡列表，请先刷新一次。");
+            AppDialog.Warning(this, Loc.T("Ui.Msg.NoNicsTitle"), Loc.T("Ui.Msg.NoNics"));
             return;
         }
         var exit = NicCoexist.PickExit(nics);
         var steps = NicCoexist.Plan(nics, exit?.Index);
         if (steps.Count == 0)
         {
-            AppDialog.Info(this, "多网卡已经共存", "当前状态已经是好的：上网出口只由一块网卡承担，在用网卡也都允许跨网卡收发。",
-                "如果某块网卡仍然不通，可以在列表里单独选中它，再点「设为仅内网」或「设为上网出口」微调。");
+            AppDialog.Info(this, Loc.T("Ui.Msg.CoexistAlreadyTitle"), Loc.T("Ui.Msg.CoexistAlready"),
+                Loc.T("Ui.Msg.CoexistAlreadyDetail"));
             return;
         }
         var byIndex = nics.ToDictionary(item => item.Index);
         var headline = exit is null
-            ? "把所有在用网卡设为可以共存？"
-            : $"保留「{exit.Name}」负责上网，其余网卡改为仅内网？";
-        var detail = string.Join(Environment.NewLine, steps.Select(step => $"· {step.Name}：{step.Summary}"))
+            ? Loc.T("Ui.Msg.CoexistHeadlineAll")
+            : Loc.F("Ui.Msg.CoexistHeadlineKeep", exit.Name);
+        var detail = string.Join(Environment.NewLine, steps.Select(step => Loc.F("Ui.Msg.CoexistStep", step.Name, step.Summary)))
             + Environment.NewLine + Environment.NewLine
-            + "仅内网的网卡依然能访问自己网段里的设备和服务器，只是不再抢上网出口；「跨网卡收发」用来避免多块网卡互相丢包。设置重启后依然有效。";
-        if (!AppDialog.Confirm(this, "一键共存", headline, detail, "开始调整")) return;
+            + Loc.T("Ui.Msg.CoexistDetail");
+        if (!AppDialog.Confirm(this, Loc.T("Ui.Msg.CoexistTitle"), headline, detail, Loc.T("Ui.Msg.CoexistConfirm"))) return;
 
         var count = steps.Count;
-        var ok = await RunBusyAsync("正在调整多网卡共存设置…", () =>
+        var ok = await RunBusyAsync(Loc.T("Ui.Msg.CoexistRunning"), () =>
         {
             foreach (var step in steps)
             {
@@ -1128,7 +1213,7 @@ public partial class MainWindow : Window
         });
         if (!ok) return;
         await RefreshNicRowsAsync();
-        SetStatus($"已调整 {count} 块网卡的共存设置。");
+        SetStatus(Loc.F("Ui.Msg.CoexistDone", count));
     }
 
     private async void SetExit_Click(object sender, RoutedEventArgs e)
@@ -1137,29 +1222,29 @@ public partial class MainWindow : Window
         var nic = row.Nic;
         if (nic.ConfiguredGateway.Length == 0 && !nic.HasDefaultRoute)
         {
-            AppDialog.Warning(this, "无法设为上网出口", $"「{nic.Name}」现在没有默认网关。",
-                "先让这块网卡拿到网关（自动获取 IP，或在「网络连接」里手动填网关），再设成上网出口。");
+            AppDialog.Warning(this, Loc.T("Ui.Msg.SetExitNoGatewayTitle"), Loc.F("Ui.Msg.SetExitNoGateway", nic.Name),
+                Loc.T("Ui.Msg.SetExitNoGatewayDetail"));
             return;
         }
         var others = _lastNics
             .Where(item => NicCoexist.ShouldGoInternal(item, nic.Index) && !item.IgnoresDefaultRoutes)
             .ToList();
         var detail = others.Count == 0
-            ? "其它网卡本来就没有在抢上网出口，这里只会解除这块网卡的「仅内网」限制。"
-            : string.Join(Environment.NewLine, others.Select(item => $"· {item.Name}：改为仅内网"))
+            ? Loc.T("Ui.Msg.SetExitDetailNone")
+            : string.Join(Environment.NewLine, others.Select(item => Loc.F("Ui.Msg.SetExitStep", item.Name)))
                 + Environment.NewLine + Environment.NewLine
-                + "仅内网的网卡依然能访问自己网段里的设备和服务器，只是不再承担上网。";
-        if (!AppDialog.Confirm(this, "设为上网出口", $"以后让「{nic.Name}」负责上网？", detail, "设为上网出口")) return;
+                + Loc.T("Ui.Msg.SetExitDetail");
+        if (!AppDialog.Confirm(this, Loc.T("Ui.Nic.SetExit"), Loc.F("Ui.Msg.SetExitHeadline", nic.Name), detail, Loc.T("Ui.Nic.SetExit"))) return;
 
         var name = nic.Name;
-        var ok = await RunBusyAsync($"正在把「{name}」设为上网出口…", () =>
+        var ok = await RunBusyAsync(Loc.F("Ui.Msg.SetExitRunning", name), () =>
         {
             NetworkApi.SetNicIgnoreDefaultRoutes(nic.Index, false);
             foreach (var item in others) NetworkApi.SetNicIgnoreDefaultRoutes(item.Index, true);
         });
         if (!ok) return;
         await RefreshNicRowsAsync();
-        SetStatus(others.Count == 0 ? $"「{name}」已设为上网出口。" : $"「{name}」已设为上网出口，其它网卡改为仅内网。");
+        SetStatus(others.Count == 0 ? Loc.F("Ui.Msg.SetExitDone", name) : Loc.F("Ui.Msg.SetExitDoneOthers", name));
     }
 
     private async void SetInternal_Click(object sender, RoutedEventArgs e)
@@ -1168,25 +1253,25 @@ public partial class MainWindow : Window
         var nic = row.Nic;
         if (nic.IgnoresDefaultRoutes)
         {
-            SetStatus($"「{nic.Name}」已经是仅内网。");
+            SetStatus(Loc.F("Ui.Msg.AlreadyInternal", nic.Name));
             return;
         }
         if (nic.Metric is null)
         {
-            AppDialog.Warning(this, "无法设置", "该网卡没有可用的 IPv4 配置，请先启用网卡或检查驱动。");
+            AppDialog.Warning(this, Loc.T("Ui.Msg.NicNoConfigTitle"), Loc.T("Ui.Msg.NicNoConfig"));
             return;
         }
         var lastExit = nic.JoinsExitRace && !_lastNics.Any(item => item.Index != nic.Index && item.JoinsExitRace);
         var detail = lastExit
-            ? $"「{nic.Name}」是目前唯一的上网出口，改成仅内网后这台电脑就不能靠它上外网了（各网卡自己网段里的设备照常访问）。"
-            : "仅内网的网卡依然能访问自己网段里的设备和服务器，只是不再抢上网出口；之后随时可以用「设为上网出口」改回来。";
-        if (!AppDialog.Confirm(this, "设为仅内网", $"不再让「{nic.Name}」抢上网出口？", detail, "设为仅内网", danger: lastExit)) return;
+            ? Loc.F("Ui.Msg.SetInternalLastExit", nic.Name)
+            : Loc.T("Ui.Msg.SetInternalDetail");
+        if (!AppDialog.Confirm(this, Loc.T("Ui.Nic.SetInternal"), Loc.F("Ui.Msg.SetInternalHeadline", nic.Name), detail, Loc.T("Ui.Nic.SetInternal"), danger: lastExit)) return;
 
         var name = nic.Name;
-        var ok = await RunBusyAsync($"正在把「{name}」设为仅内网…", () => NetworkApi.SetNicIgnoreDefaultRoutes(nic.Index, true));
+        var ok = await RunBusyAsync(Loc.F("Ui.Msg.SetInternalRunning", name), () => NetworkApi.SetNicIgnoreDefaultRoutes(nic.Index, true));
         if (!ok) return;
         await RefreshNicRowsAsync();
-        SetStatus($"「{name}」已设为仅内网（不抢上网出口）。");
+        SetStatus(Loc.F("Ui.Msg.SetInternalDone", name));
     }
 
     private async void WeakHost_Click(object sender, RoutedEventArgs e)
@@ -1195,22 +1280,20 @@ public partial class MainWindow : Window
         var nic = row.Nic;
         if (nic.Metric is null)
         {
-            AppDialog.Warning(this, "无法设置", "该网卡没有可用的 IPv4 配置，请先启用网卡或检查驱动。");
+            AppDialog.Warning(this, Loc.T("Ui.Msg.NicNoConfigTitle"), Loc.T("Ui.Msg.NicNoConfig"));
             return;
         }
         var enabled = !(nic.WeakHostSend && nic.WeakHostReceive);
-        var headline = enabled ? $"允许「{nic.Name}」跨网卡收发？" : $"禁止「{nic.Name}」跨网卡收发？";
-        var detail = enabled
-            ? "开启后这块网卡可以收发本机其它网卡上的流量（弱主机模式），多网卡同时工作时不至于互相丢包。设置重启后依然有效。"
-            : "关闭后恢复 Windows 默认的严格模式：只有目标地址属于这块网卡的流量才会被它接收。";
-        if (!AppDialog.Confirm(this, "跨网卡收发", headline, detail, enabled ? "允许" : "禁止")) return;
+        var headline = Loc.F(enabled ? "Ui.Msg.WeakHostEnableHeadline" : "Ui.Msg.WeakHostDisableHeadline", nic.Name);
+        var detail = Loc.T(enabled ? "Ui.Msg.WeakHostEnableDetail" : "Ui.Msg.WeakHostDisableDetail");
+        if (!AppDialog.Confirm(this, Loc.T("Ui.Msg.WeakHostTitle"), headline, detail, Loc.T(enabled ? "Ui.Msg.WeakHostAllow" : "Ui.Msg.WeakHostDeny"))) return;
 
         var name = nic.Name;
-        var ok = await RunBusyAsync(enabled ? $"正在允许「{name}」跨网卡收发…" : $"正在禁止「{name}」跨网卡收发…",
+        var ok = await RunBusyAsync(Loc.F(enabled ? "Ui.Msg.WeakHostEnabling" : "Ui.Msg.WeakHostDisabling", name),
             () => NetworkApi.SetNicWeakHost(nic.Index, enabled));
         if (!ok) return;
         await RefreshNicRowsAsync();
-        SetStatus(enabled ? $"「{name}」已允许跨网卡收发。" : $"「{name}」已恢复严格模式。");
+        SetStatus(Loc.F(enabled ? "Ui.Msg.WeakHostEnabled" : "Ui.Msg.WeakHostDisabled", name));
     }
 
     /// <summary>刷新右侧提示：这类“喊话”现在会从哪块网卡出去、入站会不会被防火墙丢掉。</summary>
@@ -1234,15 +1317,15 @@ public partial class MainWindow : Window
             ? string.Empty
             : _lastNics.FirstOrDefault(item => item.Index == forced.InterfaceIndex)?.Name ?? $"#{forced.InterfaceIndex}";
         var head = forced is null
-            ? $"局域网里的“喊话”由系统按跃点数挑网卡，现在走 {where}"
+            ? Loc.F("Ui.Msg.EgressAuto", where)
             : egress.InterfaceIndex == forced.InterfaceIndex
-                ? $"局域网里的“喊话”已指定走 {where}"
-                : $"“喊话”已指定走「{forcedName}」，但系统首选仍是 {where}（喊不动就用「喊一声」）";
-        DiscoveryHintText.Text = _inboundStatus is null ? head : $"{head}｜入站防火墙：{_inboundStatus.ShortText()}";
-        var tooltip = new List<string> { $"“喊话”出口（发往 {DiscoveryRoute.GroupText}）：{where}" };
-        tooltip.Add("系统挑哪块网卡发这类“喊话”，是比网卡的跃点数（数越小越优先）；只给这个组播地址加一条路由改不了它。");
-        tooltip.Add("想让对面立刻看到这台机器：用网卡页第四行的「喊一声」或「一直喊」——它们把发送套接字直接绑在选中的网卡上，不看系统挑哪块网卡。");
-        tooltip.Add(_inboundStatus is null ? "入站防火墙：正在读取…" : "入站防火墙：" + _inboundStatus.Describe());
+                ? Loc.F("Ui.Msg.EgressForced", where)
+                : Loc.F("Ui.Msg.EgressForcedMismatch", forcedName, where);
+        DiscoveryHintText.Text = _inboundStatus is null ? head : Loc.F("Ui.Msg.DiscoveryHintWithInbound", head, _inboundStatus.ShortText());
+        var tooltip = new List<string> { Loc.F("Ui.Msg.DiscoveryTipEgress", DiscoveryRoute.GroupText, where) };
+        tooltip.Add(Loc.T("Ui.Msg.DiscoveryTipMetric"));
+        tooltip.Add(Loc.T("Ui.Msg.DiscoveryTipShout"));
+        tooltip.Add(_inboundStatus is null ? Loc.T("Ui.Msg.DiscoveryTipInboundLoading") : Loc.F("Ui.Msg.DiscoveryTipInbound", _inboundStatus.Describe()));
         DiscoveryHintText.ToolTip = string.Join(Environment.NewLine, tooltip);
     }
 
@@ -1268,7 +1351,7 @@ public partial class MainWindow : Window
 
     private string DescribeDiscoveryEgress(uint egress)
     {
-        if (egress == 0) return "测不出来（可能没有网络连接）";
+        if (egress == 0) return Loc.T("Ui.Msg.EgressUnknown");
         var nic = _lastNics.FirstOrDefault(item => FirstAddressOf(item.Address) == egress);
         return nic is null ? Ipv4.ToText(egress) : $"{nic.Name}（{Ipv4.ToText(egress)}）";
     }
@@ -1290,26 +1373,26 @@ public partial class MainWindow : Window
         var nic = row.Nic;
         if (nic.IsDisabled || FirstAddressOf(nic.Address) == 0)
         {
-            AppDialog.Warning(this, "无法设置", "这块网卡现在没有可用的 IPv4 地址。", "先在「网络连接」里启用这块网卡，再来设置。");
+            AppDialog.Warning(this, Loc.T("Ui.Msg.DiscoveryNoAddressTitle"), Loc.T("Ui.Msg.DiscoveryNoAddress"), Loc.T("Ui.Msg.DiscoveryNoAddressDetail"));
             return;
         }
 
         var forcedHere = _discoveryIndex == nic.Index;
         if (!forcedHere)
         {
-            var detail = $"给 LocalSend 这类工具用的组播地址（{DiscoveryRoute.GroupText}）加一条只走「{nic.Name}」的路由，"
-                + "让它们“我在这里”的喊话从这块网卡发出去。" + Environment.NewLine + Environment.NewLine
-                + $"· 设置后：{nic.Name}（{Ipv4.ToText(FirstAddressOf(nic.Address))}）" + Environment.NewLine
-                + "· 只影响局域网发现用的组播，不影响上网，也不影响普通访问" + Environment.NewLine
-                + "· 想取消：再选这块网卡点一次这个按钮";
-            if (!AppDialog.Confirm(this, "局域网发现", $"让局域网里的“喊话”走「{nic.Name}」？", detail, "设置")) return;
-            if (!await RunBusyAsync($"正在把局域网发现的出口设为「{nic.Name}」…", () => DiscoveryRoute.Apply(nic.Index))) return;
+            var detail = Loc.F("Ui.Msg.DiscoveryApplyDetail1", DiscoveryRoute.GroupText, nic.Name)
+                + Loc.T("Ui.Msg.DiscoveryApplyDetail2") + Environment.NewLine + Environment.NewLine
+                + Loc.F("Ui.Msg.DiscoveryApplyDetail3", nic.Name, Ipv4.ToText(FirstAddressOf(nic.Address))) + Environment.NewLine
+                + Loc.T("Ui.Msg.DiscoveryApplyDetail4") + Environment.NewLine
+                + Loc.T("Ui.Msg.DiscoveryApplyDetail5");
+            if (!AppDialog.Confirm(this, Loc.T("Ui.Msg.DiscoveryTitle"), Loc.F("Ui.Msg.DiscoveryApplyHeadline", nic.Name), detail, Loc.T("Ui.Msg.DiscoveryApplyConfirm"))) return;
+            if (!await RunBusyAsync(Loc.F("Ui.Msg.DiscoveryApplying", nic.Name), () => DiscoveryRoute.Apply(nic.Index))) return;
         }
         else
         {
-            if (!AppDialog.Confirm(this, "局域网发现", "恢复成系统自动？",
-                $"会删掉只走「{nic.Name}」的那条组播路由，局域网发现重新交给系统自动挑网卡。", "恢复")) return;
-            if (!await RunBusyAsync("正在恢复局域网发现的自动选择…", () => DiscoveryRoute.Remove(nic.Index))) return;
+            if (!AppDialog.Confirm(this, Loc.T("Ui.Msg.DiscoveryTitle"), Loc.T("Ui.Msg.DiscoveryRestoreHeadline"),
+                Loc.F("Ui.Msg.DiscoveryRestoreDetail", nic.Name), Loc.T("Ui.Msg.DiscoveryRestoreConfirm"))) return;
+            if (!await RunBusyAsync(Loc.T("Ui.Msg.DiscoveryRestoring"), () => DiscoveryRoute.Remove(nic.Index))) return;
         }
 
         RefreshDiscoveryState(force: true);
@@ -1320,22 +1403,22 @@ public partial class MainWindow : Window
         var matched = egress.InterfaceIndex == nic.Index || (egress.InterfaceIndex == 0 && egress.Address == expected);
         if (!forcedHere && matched)
         {
-            SetStatus($"局域网发现已改走「{nic.Name}」（{Ipv4.ToText(egress.Address)}）。");
-            AppDialog.Info(this, "设置完成", $"现在这类“喊话”从「{nic.Name}」（{Ipv4.ToText(egress.Address)}）发出。",
-                "到对方的 LocalSend 刷新一下，看能不能搜到这台机器。" + Environment.NewLine + Environment.NewLine
-                + "如果还是搜不到，多半是那个软件自己指定了网卡：LocalSend 可以到「设置 → 高级 → 网络接口」里把不想用的网卡排除掉。");
+            SetStatus(Loc.F("Ui.Msg.DiscoveryApplied", nic.Name, Ipv4.ToText(egress.Address)));
+            AppDialog.Info(this, Loc.T("Ui.Msg.DiscoveryAppliedTitle"), Loc.F("Ui.Msg.DiscoveryAppliedBody", nic.Name, Ipv4.ToText(egress.Address)),
+                Loc.T("Ui.Msg.DiscoveryAppliedHint") + Environment.NewLine + Environment.NewLine
+                + Loc.T("Ui.Msg.DiscoveryAppliedHint2"));
         }
         else if (!forcedHere)
         {
-            SetStatus($"设置已写入，但系统还是挑 {DescribeDiscoveryEgress(egress.Address)} 发“喊话”。");
-            AppDialog.Warning(this, "设置写进去了，但没改到出口", $"系统现在仍然挑 {DescribeDiscoveryEgress(egress.Address)} 发这类“喊话”。",
-                "原因：这条路由只管“包送到哪块网卡去”，而系统挑哪块网卡发局域网的“喊话”，是按网卡的跃点数来的（数越小越优先）。"
+            SetStatus(Loc.F("Ui.Msg.DiscoveryMismatch", DescribeDiscoveryEgress(egress.Address)));
+            AppDialog.Warning(this, Loc.T("Ui.Msg.DiscoveryMismatchTitle"), Loc.F("Ui.Msg.DiscoveryMismatchBody", DescribeDiscoveryEgress(egress.Address)),
+                Loc.T("Ui.Msg.DiscoveryMismatchWhy")
                 + Environment.NewLine + Environment.NewLine
-                + "点「修复：让局域网能发现这台机器」，它会连跃点数一起调好，而且每一步都实测给你看。");
+                + Loc.T("Ui.Msg.DiscoveryMismatchFix"));
         }
         else
         {
-            SetStatus("局域网发现已恢复成系统自动选择。");
+            SetStatus(Loc.T("Ui.Msg.DiscoveryRestored"));
         }
     }
 
@@ -1344,66 +1427,67 @@ public partial class MainWindow : Window
     {
         const int seconds = 10;
         DiscoveryProbe.WatchResult? heard = null;
-        var ok = await RunBusyAsync($"正在听 {seconds} 秒，看局域网里谁在喊话…", () => heard = DiscoveryProbe.Watch(seconds));
+        var ok = await RunBusyAsync(Loc.F("Ui.Msg.ListenRunning", seconds), () => heard = DiscoveryProbe.Watch(seconds));
         if (!ok || heard is null) return;
 
         if (!heard.Listening)
         {
-            SetStatus("听不了：发现端口被别的程序占着。");
-            AppDialog.Warning(this, "听不了", heard.Problem, "关掉占着这个端口的程序再点一次；或者直接点「修复：让局域网能发现这台机器」。");
+            SetStatus(Loc.T("Ui.Msg.ListenPortBusy"));
+            AppDialog.Warning(this, Loc.T("Ui.Msg.ListenPortBusyTitle"), heard.Problem, Loc.T("Ui.Msg.ListenPortBusyDetail"));
             return;
         }
 
         var lines = new List<string>();
         if (heard.Mine.Count == 0)
         {
-            lines.Add($"· 本机自己的喊话：这 {seconds} 秒里一条都没听到");
+            lines.Add(Loc.F("Ui.Msg.ListenNoneMine", seconds));
         }
         else
         {
-            lines.Add($"· 本机自己的喊话：{heard.Mine.Count} 条（源地址就是本机喊话用的地址）");
+            lines.Add(Loc.F("Ui.Msg.ListenMineCount", heard.Mine.Count));
             foreach (var shout in heard.Mine.Take(3))
             {
-                lines.Add($"    来自 {DescribeDiscoveryEgress(AddressOfText(shout.Source))}，{shout.Bytes} 字节");
+                lines.Add(Loc.F("Ui.Msg.ListenMineFrom", DescribeDiscoveryEgress(AddressOfText(shout.Source)), shout.Bytes));
             }
         }
         lines.Add(string.Empty);
         if (heard.Others.Count == 0)
         {
-            lines.Add("· 别人的喊话：一条都没听到");
+            lines.Add(Loc.T("Ui.Msg.ListenNoneOthers"));
         }
         else
         {
             var groups = heard.Others.GroupBy(item => item.Source).OrderByDescending(item => item.Count()).ToList();
-            lines.Add($"· 别人的喊话：{heard.Others.Count} 条，来自 {groups.Count} 个地址");
+            lines.Add(Loc.F("Ui.Msg.ListenOthersCount", heard.Others.Count, groups.Count));
             foreach (var group in groups.Take(8))
             {
                 var alias = group.Select(item => item.Alias).FirstOrDefault(text => text.Length > 0);
-                lines.Add($"    {DescribeDiscoveryEgress(AddressOfText(group.Key))}，{group.Count()} 条" + (alias is null ? string.Empty : $"，设备名“{alias}”"));
+                lines.Add(Loc.F("Ui.Msg.ListenOtherItem", DescribeDiscoveryEgress(AddressOfText(group.Key)), group.Count())
+                    + (alias is null ? string.Empty : Loc.F("Ui.Msg.ListenOtherAlias", alias)));
             }
         }
 
         var mine = heard.Mine.Select(item => AddressOfText(item.Source)).Where(value => value != 0).Distinct().ToList();
         var target = (NicGrid.SelectedItem as NicRowVm)?.Nic;
         lines.Add(string.Empty);
-        lines.Add("怎么看");
+        lines.Add(Loc.T("Ui.Msg.ListenHowTo"));
         if (mine.Count == 0)
         {
-            lines.Add("· 没听到自己的喊话：说明发现软件这会儿本来就没在喊（它是隔一阵子喊一次，开机时已经喊过了）。");
-            lines.Add("· 听得到别人、听不到自己，多半就是本机的喊话没发出去。");
+            lines.Add(Loc.T("Ui.Msg.ListenNoMine1"));
+            lines.Add(Loc.T("Ui.Msg.ListenNoMine2"));
         }
         else
         {
-            lines.Add($"· 本机喊话的出口：{string.Join("、", mine.Select(value => DescribeDiscoveryEgress(value)))}");
-            lines.Add("· 这里显示哪块网卡，喊话就是从哪块网卡出去的。");
+            lines.Add(Loc.F("Ui.Msg.ListenMineEgress", string.Join(Loc.T("Core.List.Separator"), mine.Select(value => DescribeDiscoveryEgress(value)))));
+            lines.Add(Loc.T("Ui.Msg.ListenMineEgressHint"));
         }
         if (target is not null && mine.Count > 0 && mine.All(value => value != FirstAddressOf(target.Address)))
         {
-            lines.Add($"· 现在走的不是选中的「{target.Name}」：点「修复：让局域网能发现这台机器」，它会想办法把出口改过去。");
+            lines.Add(Loc.F("Ui.Msg.ListenNotSelected", target.Name));
         }
 
-        SetStatus($"听完了：别人的喊话 {heard.Others.Count} 条，本机自己的 {heard.Mine.Count} 条。");
-        AppDialog.Info(this, "听听看", $"听了 {seconds} 秒：别人的喊话 {heard.Others.Count} 条，本机自己的 {heard.Mine.Count} 条。",
+        SetStatus(Loc.F("Ui.Msg.ListenDone", heard.Others.Count, heard.Mine.Count));
+        AppDialog.Info(this, Loc.T("Ui.Msg.ListenTitle"), Loc.F("Ui.Msg.ListenBody", seconds, heard.Others.Count, heard.Mine.Count),
             string.Join(Environment.NewLine, lines));
     }
 
@@ -1413,30 +1497,30 @@ public partial class MainWindow : Window
         var nic = row.Nic;
         if (nic.IsDisabled || FirstAddressOf(nic.Address) == 0)
         {
-            AppDialog.Warning(this, "无法修复", "这块网卡现在没有可用的 IPv4 地址。", "先在「网络连接」里启用这块网卡，再来修复。");
+            AppDialog.Warning(this, Loc.T("Ui.Msg.FixNoAddressTitle"), Loc.T("Ui.Msg.DiscoveryNoAddress"), Loc.T("Ui.Msg.FixNoAddressDetail"));
             return;
         }
         if (!NetworkApi.IsElevated)
         {
-            AppDialog.Warning(this, "需要管理员权限", "改防火墙、改网络位置都需要管理员权限。", "关掉本程序，右键选择「以管理员身份运行」，再点一次这个按钮。");
+            AppDialog.Warning(this, Loc.T("Ui.Msg.FixNeedsAdminTitle"), Loc.T("Ui.Msg.FixNeedsAdmin"), Loc.T("Ui.Msg.FixNeedsAdminDetail"));
             return;
         }
 
         var status = _inboundStatus ?? DiscoveryFirewall.Query(nic.Index);
-        var blocks = status.BlockingRules.Count == 0 ? "当前没有" : $"{status.BlockingRules.Count} 条";
+        var blocks = status.BlockingRules.Count == 0 ? Loc.T("Ui.Msg.FixBlocksNone") : Loc.F("Ui.Msg.FixBlocksCount", status.BlockingRules.Count);
         var detail = new List<string>
         {
-            $"· 停掉把别人的发现包丢掉的「阻止」入站规则（{blocks}）",
-            $"· 把发现端口 {DiscoveryRoute.Port} 放行到所有网络位置（专用 + 公用，TCP + UDP）",
-            $"· 把「{nic.Name}」所在网络的“位置”改成「专用」（现在是「{status.CategoryText}」）",
-            $"· 让发现用的“喊话”从「{nic.Name}」（{Ipv4.ToText(FirstAddressOf(nic.Address))}）出去",
-            $"· 系统要是还挑别的网卡，就把「{nic.Name}」的跃点数调到最低（随时能用「恢复自动跃点」改回来）",
-            $"· 用这台机器上 LocalSend 的身份，从「{nic.Name}」主动喊一声“我在这里”（不用看系统挑哪块网卡）",
+            Loc.F("Ui.Msg.FixStepBlocks", blocks),
+            Loc.F("Ui.Msg.FixStepAllow", DiscoveryRoute.Port),
+            Loc.F("Ui.Msg.FixStepProfile", nic.Name, status.CategoryText),
+            Loc.F("Ui.Msg.FixStepEgress", nic.Name, Ipv4.ToText(FirstAddressOf(nic.Address))),
+            Loc.F("Ui.Msg.FixStepMetric", nic.Name),
+            Loc.F("Ui.Msg.FixStepShout", nic.Name),
         };
         detail.Add(string.Empty);
-        detail.Add("做完这些，同一个局域网里的其它机器（比如 10.40.81.200 上的 LocalSend）刷新后就能搜到这台机器了。改的都是入站放行和这块网卡的优先级，不影响上网，也不影响普通访问。");
-        if (!AppDialog.Confirm(this, "让局域网能发现这台机器", $"修好之后，别人应该就能搜到「{nic.Name}」上的这台机器。",
-                string.Join(Environment.NewLine, detail), "开始修复")) return;
+        detail.Add(Loc.T("Ui.Msg.FixDetailFooter"));
+        if (!AppDialog.Confirm(this, Loc.T("Ui.Msg.FixTitle"), Loc.F("Ui.Msg.FixHeadline", nic.Name),
+                string.Join(Environment.NewLine, detail), Loc.T("Ui.Msg.FixConfirm"))) return;
 
         var firewallSteps = new List<string>();
         var discoverySteps = new List<string>();
@@ -1445,7 +1529,7 @@ public partial class MainWindow : Window
         var boostNote = string.Empty;
         var blockedNote = string.Empty;
         var shoutNote = string.Empty;
-        var ok = await RunBusyAsync("正在修防火墙和发现出口…", () =>
+        var ok = await RunBusyAsync(Loc.T("Ui.Msg.FixRunning"), () =>
         {
             firewallSteps.AddRange(DiscoveryFirewall.Repair(nic.Index));
             DiscoveryRoute.Apply(nic.Index);
@@ -1453,21 +1537,21 @@ public partial class MainWindow : Window
             after = DiscoveryProbe.Lookup();
             if (after.InterfaceIndex == nic.Index)
             {
-                discoverySteps.Add($"系统现在会从「{nic.Name}」发这类“喊话”");
+                discoverySteps.Add(Loc.F("Ui.Msg.FixEgressOk", nic.Name));
             }
             else
             {
-                discoverySteps.Add($"系统现在还是挑 {DescribeDiscoveryEgress(after.Address)} 发这类“喊话”");
+                discoverySteps.Add(Loc.F("Ui.Msg.FixEgressStill", DescribeDiscoveryEgress(after.Address)));
                 var internetBefore = DiscoveryProbe.InternetEgress();
                 var expected = FirstAddressOf(nic.Address);
                 var change = DiscoveryBoost.Lower(nic.Index, out var target);
                 if (change is null)
                 {
-                    discoverySteps.Add("第二招用不上：读不到这块网卡的跃点数");
+                    discoverySteps.Add(Loc.T("Ui.Msg.FixNoMetric"));
                 }
                 else if (change.Original is int already && already <= target)
                 {
-                    discoverySteps.Add($"第二招不用改：这块网卡的跃点数已经是最低（{already}）");
+                    discoverySteps.Add(Loc.F("Ui.Msg.FixMetricLowest", already));
                 }
                 else
                 {
@@ -1475,46 +1559,46 @@ public partial class MainWindow : Window
                     if (internetBefore != expected && internetAfter == expected)
                     {
                         DiscoveryBoost.Restore(change);
-                        blockedNote = $"把「{nic.Name}」的跃点数调到最低，会让上网出口也变成它（现在上网走 {DescribeDiscoveryEgress(internetBefore)}），"
-                            + "所以这一招跳过了，跃点数已经帮你还原——不然上网就可能断掉。";
-                        discoverySteps.Add("第二招没敢用：会把上网出口也抢过去，已经还原");
+                        blockedNote = Loc.F("Ui.Msg.FixStealNote", nic.Name, DescribeDiscoveryEgress(internetBefore))
+                            + Loc.T("Ui.Msg.FixStealNote2");
+                        discoverySteps.Add(Loc.T("Ui.Msg.FixStealStep"));
                     }
                     else
                     {
-                        var originalText = change.Original is int original ? $"从 {original} 降到 {target}" : $"降到 {target}";
-                        boostNote = $"把「{nic.Name}」的跃点数{originalText}（原来是{(change.WasAutomatic ? "自动获取" : "手动")}），让系统优先挑它";
-                        discoverySteps.Add("第二招：" + boostNote);
+                        var originalText = change.Original is int original ? Loc.F("Ui.Msg.FixBoostFrom", original, target) : Loc.F("Ui.Msg.FixBoostTo", target);
+                        boostNote = Loc.F("Ui.Msg.FixBoostNote", nic.Name, originalText, Loc.T(change.WasAutomatic ? "Ui.Msg.FixBoostAuto" : "Ui.Msg.FixBoostManual"));
+                        discoverySteps.Add(Loc.F("Ui.Msg.FixBoostStep", boostNote));
                     }
                 }
 
                 after = DiscoveryProbe.Lookup();
                 discoverySteps.Add(after.InterfaceIndex == nic.Index
-                    ? $"复查：现在系统会从「{nic.Name}」（{Ipv4.ToText(after.Address)}）发这类“喊话”"
-                    : $"复查：系统还是挑 {DescribeDiscoveryEgress(after.Address)} 发这类“喊话”");
+                    ? Loc.F("Ui.Msg.FixRecheckOk", nic.Name, Ipv4.ToText(after.Address))
+                    : Loc.F("Ui.Msg.FixRecheckStill", DescribeDiscoveryEgress(after.Address)));
                 var rank = DiscoveryBoost.BestMulticastNic(NetworkApi.ListNics());
                 discoverySteps.Add(rank.Index == nic.Index
-                    ? $"按跃点数排名：现在排第一的正是「{nic.Name}」（组合跃点 {rank.Metric}）"
-                    : $"按跃点数排名：排在前面的还是 {DescribeInterface(rank.Index)}（组合跃点 {rank.Metric}）");
+                    ? Loc.F("Ui.Msg.FixRankFirst", nic.Name, rank.Metric)
+                    : Loc.F("Ui.Msg.FixRankStill", DescribeInterface(rank.Index), rank.Metric));
             }
 
             measured = DiscoveryProbe.Measure();
             discoverySteps.Add(measured.Measured
-                ? $"实测：真发了 120 个测试包，从 {DescribeDiscoveryEgress(measured.Address)} 出去"
-                : $"实测：测试包在这台机器上计数没变化（虚拟网卡或驱动不报），只能按系统自己挑的算：{DescribeDiscoveryEgress(measured.Address)}");
+                ? Loc.F("Ui.Msg.FixMeasured", DescribeDiscoveryEgress(measured.Address))
+                : Loc.F("Ui.Msg.FixMeasureFallback", DescribeDiscoveryEgress(measured.Address)));
 
             var identity = LocalSendShout.ReadIdentity();
             if (!identity.Ready)
             {
-                shoutNote = "没替它喊话：" + (identity.Problem.Length > 0 ? identity.Problem : "读不到 LocalSend 的身份");
+                shoutNote = Loc.F("Ui.Msg.FixNoShout", identity.Problem.Length > 0 ? identity.Problem : Loc.T("Ui.Msg.FixNoIdentity"));
             }
             else
             {
                 var shouted = LocalSendShout.Send(identity, nic.Index, Ipv4.ToText(FirstAddressOf(nic.Address)), 3, 400);
                 shoutNote = shouted.Sent > 0
-                    ? $"已经用「{identity.Alias}」的身份，从「{nic.Name}」（{shouted.From}）主动喊了 {shouted.Sent} 次"
-                        + (shouted.PacketDelta >= 0 ? $"（这块网卡的组播计数 +{shouted.PacketDelta}）" : string.Empty)
-                        + " —— 对面刷新后应该就能看到这台机器"
-                    : $"想替它喊一声，但没成功：{shouted.Problem}";
+                    ? Loc.F("Ui.Msg.FixShouted", identity.Alias, nic.Name, shouted.From, shouted.Sent)
+                        + (shouted.PacketDelta >= 0 ? Loc.F("Ui.Msg.FixShoutedDelta", shouted.PacketDelta) : string.Empty)
+                        + Loc.T("Ui.Msg.FixShoutedTail")
+                    : Loc.F("Ui.Msg.FixShoutFailed", shouted.Problem);
             }
         });
         if (!ok) return;
@@ -1525,56 +1609,56 @@ public partial class MainWindow : Window
         RenderDiscoveryHint();
         UpdateButtonStates();
 
-        var lines = new List<string> { "防火墙" };
-        if (firewallSteps.Count == 0) lines.Add("· 没有要改的地方，本来就是放行的");
+        var lines = new List<string> { Loc.T("Ui.Msg.FixSectionFirewall") };
+        if (firewallSteps.Count == 0) lines.Add(Loc.T("Ui.Msg.FixFirewallNothing"));
         foreach (var step in firewallSteps) lines.Add("· " + step);
         lines.Add(string.Empty);
-        lines.Add($"发现喊话（发往 {DiscoveryRoute.GroupText}）");
+        lines.Add(Loc.F("Ui.Msg.FixSectionDiscovery", DiscoveryRoute.GroupText));
         foreach (var step in discoverySteps) lines.Add("· " + step);
         lines.Add(_inboundStatus.ProfileKnown
-            ? $"· 网络位置：{_inboundStatus.CategoryText}" + (_inboundStatus.NetworkName.Length > 0 ? $"（网络名：{_inboundStatus.NetworkName}）" : string.Empty)
-            : "· 网络位置：没读到（不影响上面的放行设置）");
+            ? Loc.F("Ui.Msg.FixProfile", _inboundStatus.CategoryText) + (_inboundStatus.NetworkName.Length > 0 ? Loc.F("Ui.Msg.FixProfileName", _inboundStatus.NetworkName) : string.Empty)
+            : Loc.T("Ui.Msg.FixProfileUnknown"));
         if (_inboundStatus.Joined.Count > 0)
         {
             lines.Add(_inboundStatus.Joined.Contains(nic.Index)
-                ? $"· 「{nic.Name}」已经在发现组里了，发现软件能在这块网卡上收到喊话"
-                : $"· 「{nic.Name}」还没加入发现组：发现软件可能没在这块网卡上监听");
+                ? Loc.F("Ui.Msg.FixJoined", nic.Name)
+                : Loc.F("Ui.Msg.FixNotJoined", nic.Name));
         }
         lines.Add(string.Empty);
-        lines.Add("替这台机器喊了一声（不用看系统挑哪块网卡）");
+        lines.Add(Loc.T("Ui.Msg.FixSectionShout"));
         lines.Add("· " + shoutNote);
         if (blockedNote.Length > 0)
         {
             lines.Add(string.Empty);
-            lines.Add("第二招没用上");
+            lines.Add(Loc.T("Ui.Msg.FixSectionSkipped"));
             lines.Add("· " + blockedNote);
-            lines.Add("· 换个办法：LocalSend 的「设置 → 高级 → 网络接口」里只勾以太网（把 Wi-Fi 排除掉），再把它重启一次。");
+            lines.Add(Loc.T("Ui.Msg.FixSkippedAlt"));
         }
         if (boostNote.Length > 0)
         {
             lines.Add(string.Empty);
-            lines.Add("改了系统的优先级");
+            lines.Add(Loc.T("Ui.Msg.FixSectionBoost"));
             lines.Add("· " + boostNote);
-            lines.Add("· 想还原：在「网卡优先级」页点「恢复自动跃点」。");
+            lines.Add(Loc.T("Ui.Msg.FixBoostRevert"));
         }
         lines.Add(string.Empty);
-        lines.Add("接下来");
-        lines.Add("· 把 LocalSend 完全关掉再打开（它在启动时才会重新挑网卡），然后到 10.40.81.200 那台机器上刷新看看。");
-        lines.Add("· 刚才已经替这台机器喊过一声：对面刷新后应该就能看到；过一会儿又消失了，就点「一直喊（每 15 秒一次）」。");
-        lines.Add("· 还是搜不到：LocalSend 的「设置 → 高级 → 网络接口」里只留以太网，把 Wi-Fi 和 VMware 虚拟网卡去掉，再重启一次。");
-        lines.Add("· 一直不行：把日志文件 C:\\ProgramData\\SRM\\srm.log 发过来，里面记着每一步的原话。");
+        lines.Add(Loc.T("Ui.Msg.FixSectionNext"));
+        lines.Add(Loc.T("Ui.Msg.FixNext1"));
+        lines.Add(Loc.T("Ui.Msg.FixNext2"));
+        lines.Add(Loc.T("Ui.Msg.FixNext3"));
+        lines.Add(Loc.T("Ui.Msg.FixNext4"));
 
         var egressOk = after?.InterfaceIndex == nic.Index || (measured?.Measured == true && measured.InterfaceIndex == nic.Index);
         var good = egressOk && _inboundStatus.BlockingRules.Count == 0 && _inboundStatus.PortAllowed;
         if (good)
         {
-            SetStatus($"局域网发现已修好：入站已放行，喊话走「{nic.Name}」。");
-            AppDialog.Info(this, "修好了", $"这台机器的入站通道已经打开，喊话也改成从「{nic.Name}」发出，别人应该能搜到它了。", string.Join(Environment.NewLine, lines));
+            SetStatus(Loc.F("Ui.Msg.FixDone", nic.Name));
+            AppDialog.Info(this, Loc.T("Ui.Msg.FixDoneTitle"), Loc.F("Ui.Msg.FixDoneBody", nic.Name), string.Join(Environment.NewLine, lines));
         }
         else
         {
-            SetStatus("修复做了一部分，还有没弄好的地方。");
-            AppDialog.Warning(this, "修了一部分", "还有没弄好的地方，看下面的说明。", string.Join(Environment.NewLine, lines));
+            SetStatus(Loc.T("Ui.Msg.FixPartial"));
+            AppDialog.Warning(this, Loc.T("Ui.Msg.FixPartialTitle"), Loc.T("Ui.Msg.FixPartialBody"), string.Join(Environment.NewLine, lines));
         }
     }
 
@@ -1595,9 +1679,9 @@ public partial class MainWindow : Window
     {
         identity = LocalSendShout.ReadIdentity();
         if (identity.Ready) return true;
-        AppDialog.Warning(this, "还没法替它喊话",
-            identity.Problem.Length > 0 ? identity.Problem : "读不到 LocalSend 的身份。",
-            "先打开一次 LocalSend、随便传一次东西（让它把自己的身份建起来），再回来点这个按钮。");
+        AppDialog.Warning(this, Loc.T("Ui.Msg.ShoutNoIdentityTitle"),
+            identity.Problem.Length > 0 ? identity.Problem : Loc.T("Ui.Msg.FixNoIdentity"),
+            Loc.T("Ui.Msg.ShoutNoIdentity"));
         return false;
     }
 
@@ -1605,14 +1689,14 @@ public partial class MainWindow : Window
     {
         if (ShoutTarget() is not { } target)
         {
-            AppDialog.Warning(this, "喊不了", "先在列表里选中一块“在用、有 IPv4 地址”的网卡。",
-                "被禁用的网卡、或者还没拿到 IP 的虚拟网卡，喊不出去。");
+            AppDialog.Warning(this, Loc.T("Ui.Msg.ShoutNoTargetTitle"), Loc.T("Ui.Msg.ShoutNoTarget"),
+                Loc.T("Ui.Msg.ShoutNoTargetDetail"));
             return;
         }
         if (!TryReadShoutIdentity(out var identity)) return;
 
         LocalSendShout.ShoutResult? result = null;
-        var ok = await RunBusyAsync($"正在从「{target.Nic.Name}」喊一声…", () =>
+        var ok = await RunBusyAsync(Loc.F("Ui.Msg.ShoutSending", target.Nic.Name), () =>
         {
             result = LocalSendShout.Send(identity, target.Nic.Index, Ipv4.ToText(target.Address));
         });
@@ -1620,21 +1704,21 @@ public partial class MainWindow : Window
 
         var lines = new List<string>
         {
-            $"身份：{identity.Alias} —— 从 LocalSend 的设置里读到的设备名，对面列表里看到的就是它",
-            $"出口：{result.From}（网卡 #{target.Nic.Index} · {target.Nic.Name}）",
+            Loc.F("Ui.Msg.ShoutIdentityLine", identity.Alias),
+            Loc.F("Ui.Msg.ShoutEgressLine", result.From, target.Nic.Index, target.Nic.Name),
             result.PacketDelta >= 0
-                ? $"实测：喊了 {result.Sent} 次，这块网卡的组播包计数 +{result.PacketDelta}、字节 +{result.ByteDelta}：包确实从它出去了"
-                : $"已经喊了 {result.Sent} 次（这块网卡读不到发送计数，没法用计数复核）",
+                ? Loc.F("Ui.Msg.ShoutMeasured", result.Sent, result.PacketDelta, result.ByteDelta)
+                : Loc.F("Ui.Msg.ShoutSentNoCounter", result.Sent),
         };
         lines.Add(string.Empty);
-        lines.Add("接下来");
-        lines.Add("· 让对方在那台机器上打开 LocalSend 的「附近设备」：几秒内就该看到这台机器；没看到就点一下对方的刷新，或者重开一次对方的 LocalSend。");
-        lines.Add("· 想一直能被搜到：点「一直喊（每 15 秒一次）」，程序开着的时候每 15 秒替你喊一声。");
-        lines.Add("· 传文件仍然是 LocalSend 的活：这台机器的 LocalSend 保持开着就行。");
+        lines.Add(Loc.T("Ui.Msg.FixSectionNext"));
+        lines.Add(Loc.T("Ui.Msg.ShoutNext1"));
+        lines.Add(Loc.T("Ui.Msg.ShoutNext2"));
+        lines.Add(Loc.T("Ui.Msg.ShoutNext3"));
 
-        SetStatus($"已经从「{target.Nic.Name}」（{result.From}）喊了 {result.Sent} 次。");
-        AppDialog.Info(this, "喊过了",
-            $"已经从「{target.Nic.Name}」喊了 {result.Sent} 次，对方刷新后应该就能看到这台机器。",
+        SetStatus(Loc.F("Ui.Msg.ShoutDone", target.Nic.Name, result.From, result.Sent));
+        AppDialog.Info(this, Loc.T("Ui.Msg.ShoutDoneTitle"),
+            Loc.F("Ui.Msg.ShoutDoneBody", target.Nic.Name, result.Sent),
             string.Join(Environment.NewLine, lines));
     }
 
@@ -1642,13 +1726,13 @@ public partial class MainWindow : Window
     {
         if (_shoutTimer is not null)
         {
-            StopShouting("已停止持续喊话。");
+            StopShouting(Loc.T("Ui.Msg.ShoutStopped"));
             return;
         }
         if (ShoutTarget() is not { } target)
         {
-            AppDialog.Warning(this, "喊不了", "先在列表里选中一块“在用、有 IPv4 地址”的网卡。",
-                "被禁用的网卡、或者还没拿到 IP 的虚拟网卡，喊不出去。");
+            AppDialog.Warning(this, Loc.T("Ui.Msg.ShoutNoTargetTitle"), Loc.T("Ui.Msg.ShoutNoTarget"),
+                Loc.T("Ui.Msg.ShoutNoTargetDetail"));
             return;
         }
         if (!TryReadShoutIdentity(out _)) return;
@@ -1678,7 +1762,7 @@ public partial class MainWindow : Window
         var identity = LocalSendShout.ReadIdentity();
         if (!identity.Ready)
         {
-            StopShouting("持续喊话已停止：读不到 LocalSend 的身份。");
+            StopShouting(Loc.T("Ui.Msg.ShoutStoppedNoIdentity"));
             return;
         }
 
@@ -1691,18 +1775,18 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            StopShouting("持续喊话已停止：" + Shorten(ex.Message));
+            StopShouting(Loc.F("Ui.Msg.ShoutStoppedError", Shorten(ex.Message)));
             return;
         }
 
         if (result.Sent == 0)
         {
-            StopShouting("持续喊话已停止：" + (result.Problem.Length > 0 ? Shorten(result.Problem) : "发不出去"));
+            StopShouting(Loc.F("Ui.Msg.ShoutStoppedError", result.Problem.Length > 0 ? Shorten(result.Problem) : Loc.T("Ui.Msg.ShoutStoppedSend")));
             return;
         }
 
         _shoutSent++;
-        SetStatus($"持续喊话中：已经喊了 {_shoutSent} 次，最近一次从 {result.From}（网卡 #{result.InterfaceIndex}）发出。");
+        SetStatus(Loc.F("Ui.Msg.ShoutTicking", _shoutSent, result.From, result.InterfaceIndex));
     }
 
     private void StopShouting(string message)
@@ -1718,6 +1802,6 @@ public partial class MainWindow : Window
     private async void RefreshAll_Click(object sender, RoutedEventArgs e)
     {
         await RefreshAllAsync();
-        SetStatus("列表已刷新。");
+        SetStatus(Loc.T("Ui.Msg.ListRefreshed"));
     }
 }
